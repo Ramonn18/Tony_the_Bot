@@ -16,7 +16,22 @@ Created this `prompt_log.md` file in the project folder to log all prompts and r
 
 ---
 
+### [2]
+
+**User:**
+Evrytime i start a new prompt automatically log the prompt in th prompt_log.md file
+
+**Assistant:**
+Created `.claude/settings.json` with a `UserPromptSubmit` hook that automatically appends every new prompt to `prompt_log.md` with a timestamp.
+
 ---
 
-**[2026-04-02 19:35:51] User:**
-test prompt from pipe test
+### [3]
+
+**User:**
+end session
+
+**Assistant:**
+Session ended. Goodbye!
+
+---
