@@ -5,7 +5,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.prompt' | { read -r prompt; case \"$prompt\" in '<task-notification>'*) exit 0;; esac; timestamp=$(date '+%Y-%m-%d %H:%M:%S'); printf '\\n---\\n\\n**[%s] User:**\\n%s\\n' \"$timestamp\" \"$prompt\" >> \"/Users/ramonnaula/Desktop/Classroom_Bot/Tony_the_Bot/prompt_log.md\"; } 2>/dev/null || true"
+            "command": "jq -r '.prompt' | { read -r prompt; case \"$prompt\" in '<task-notification>'*) exit 0;; esac; timestamp=$(date '+%Y-%m-%d %H:%M:%S'); printf '\\n---\\n\\n**[%s] User:**\\n%s\\n' \"$timestamp\" \"$prompt\" >> \"/Users/ramonnaula/Desktop/Classroom_Bot/Tony_the_Bot/Log/prompt_log.md\"; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/ramonnaula/Desktop/Classroom_Bot/Tony_the_Bot/Log/log_conversation.py 2>/dev/null || true"
           }
         ]
       }
