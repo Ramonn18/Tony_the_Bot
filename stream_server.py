@@ -250,12 +250,75 @@ def detections():
         })
 
 
+def get_system_stats():
+    """Read CPU %, RAM %, and CPU temperature."""
+    try:
+        import psutil
+        cpu = psutil.cpu_percent(interval=0.2)
+        ram = psutil.virtual_memory()
+        ram_pct  = ram.percent
+        ram_used = round(ram.used / 1024 / 1024)
+        ram_total = round(ram.total / 1024 / 1024)
+    except Exception:
+        cpu, ram_pct, ram_used, ram_total = None, None, None, None
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            temp_c = round(int(f.read().strip()) / 1000, 1)
+    except Exception:
+        temp_c = None
+    return {
+        "cpu_pct":   cpu,
+        "ram_pct":   ram_pct,
+        "ram_used":  ram_used,
+        "ram_total": ram_total,
+        "temp_c":    temp_c,
+    }
+
+
+def get_signal_strength():
+    """Read WiFi signal from /proc/net/wireless. Returns dBm and quality 0-100."""
+    try:
+        with open("/proc/net/wireless") as f:
+            lines = f.readlines()
+        for line in lines[2:]:
+            parts = line.split()
+            if not parts:
+                continue
+            dbm = float(parts[3].strip("."))
+            if dbm > 0:
+                dbm -= 256  # unsigned to signed conversion
+            # Map dBm to 0-100%: -30=100%, -90=0%
+            quality = max(0, min(100, int((dbm + 90) / 60 * 100)))
+            return {"dbm": int(dbm), "quality": quality}
+    except Exception:
+        return {"dbm": None, "quality": None}
+
+
+@app.route("/snapshot")
+def snapshot():
+    with frame_lock:
+        frame = latest_frame
+    if frame is None:
+        return "No frame available", 503
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Response(
+        frame,
+        mimetype="image/jpeg",
+        headers={"Content-Disposition": f"attachment; filename=tony_{timestamp}.jpg"}
+    )
+
+
 @app.route("/stats")
 def stats():
+    signal = get_signal_strength()
+    system = get_system_stats()
     return jsonify({
-        "fps_camera": fps_camera,
-        "fps_stream": fps_stream,
-        "fps_yolo":   fps_yolo,
+        "fps_camera":    fps_camera,
+        "fps_stream":    fps_stream,
+        "fps_yolo":      fps_yolo,
+        "signal_dbm":    signal["dbm"],
+        "signal_quality":signal["quality"],
+        **system,
     })
 
 
@@ -334,174 +397,363 @@ def index():
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Tony the Bot — Monitor</title>
+  <title>// TONY_MONITOR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --yellow:  #f5c518;
+      --cyan:    #00d4ff;
+      --magenta: #ff003c;
+      --orange:  #ff8c00;
+      --bg:      #080810;
+      --panel:   #0d0d1a;
+      --panel2:  #0a0a16;
+      --border:  #1a1a33;
+      --border2: #22223a;
+      --text:    #c8c8d8;
+      --dim:     #44445a;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
-      background: #0d0d0d;
-      color: #e0e0e0;
-      font-family: 'Courier New', monospace;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
       height: 100vh;
       display: flex;
       flex-direction: column;
-    }
-
-    header {
-      padding: 12px 20px;
-      background: #111;
-      border-bottom: 1px solid #1a1a1a;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-    header h1 { font-size: 1rem; color: #00ff88; letter-spacing: 2px; }
-    #status-dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      background: #444; flex-shrink: 0;
-    }
-    #status-dot.live { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
-
-    .counts {
-      display: flex; gap: 12px; flex-wrap: wrap;
-    }
-    .count-badge {
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 4px;
-      padding: 2px 10px;
-      font-size: 0.75rem;
-      color: #aaa;
-    }
-    .count-badge span { color: #00ff88; font-weight: bold; }
-
-    /* Power panel */
-    .power-panel {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      background: #161616;
-      border: 1px solid #2a2a2a;
-      border-radius: 6px;
-      padding: 4px 12px;
-      font-size: 0.72rem;
-      flex-shrink: 0;
-    }
-    .power-icon { font-size: 1rem; }
-    .power-label { color: #666; letter-spacing: 1px; text-transform: uppercase; }
-    .power-value { color: #e0e0e0; font-weight: bold; }
-    .power-value.ok    { color: #00ff88; }
-    .power-value.warn  { color: #ffcc00; }
-    .power-value.crit  { color: #ff4444; }
-
-    .battery-bar-wrap {
-      width: 60px; height: 8px;
-      background: #222; border-radius: 4px; overflow: hidden;
-      border: 1px solid #333;
-    }
-    .battery-bar {
-      height: 100%; border-radius: 4px;
-      transition: width 0.5s ease, background 0.5s ease;
-    }
-
-    .main {
-      display: flex;
-      flex: 1;
       overflow: hidden;
     }
 
-    .video-panel {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-      background: #0d0d0d;
-    }
-    .video-panel img {
-      max-width: 100%;
-      max-height: 100%;
-      border: 1px solid #222;
-      border-radius: 4px;
+    /* ── SCANLINE OVERLAY ── */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 3px,
+        rgba(0,0,0,0.08) 3px,
+        rgba(0,0,0,0.08) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
     }
 
-    .sidebar {
-      width: 300px;
-      border-left: 1px solid #1a1a1a;
+    /* ── HEADER ── */
+    header {
       display: flex;
-      flex-direction: column;
-      background: #111;
+      align-items: center;
+      gap: 14px;
+      padding: 0 20px;
+      height: 52px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      position: relative;
     }
-    .sidebar-header {
-      padding: 10px 14px;
-      font-size: 0.7rem;
-      color: #555;
-      letter-spacing: 1px;
-      border-bottom: 1px solid #1a1a1a;
+    /* yellow left accent bar */
+    header::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--yellow);
+    }
+
+    .brand {
+      display: flex; flex-direction: column; line-height: 1.1;
+    }
+    .brand-title {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 1.1rem; font-weight: 700;
+      color: var(--yellow);
+      letter-spacing: 3px;
       text-transform: uppercase;
     }
-    #event-log {
+    .brand-sub {
+      font-size: 0.55rem;
+      color: var(--dim);
+      letter-spacing: 2px;
+    }
+
+    #status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--dim); flex-shrink: 0;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    #status-dot.live {
+      background: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan);
+    }
+
+    .counts { display: flex; gap: 8px; flex-wrap: wrap; }
+    .count-badge {
+      background: rgba(0,212,255,0.06);
+      border: 1px solid rgba(0,212,255,0.2);
+      clip-path: polygon(6px 0%, 100% 0%, calc(100% - 6px) 100%, 0% 100%);
+      padding: 2px 12px;
+      font-size: 0.68rem;
+      color: var(--dim);
+      letter-spacing: 1px;
+    }
+    .count-badge span { color: var(--cyan); }
+
+    /* header chip shared style */
+    .hchip {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border2);
+      padding: 4px 12px;
+      font-size: 0.68rem;
+      flex-shrink: 0;
+    }
+    .hlabel { color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
+    .hval   { color: var(--text); font-weight: bold; }
+    .hval.ok   { color: var(--cyan); }
+    .hval.warn { color: var(--orange); }
+    .hval.crit { color: var(--magenta); animation: blink 0.8s step-start infinite; }
+
+    /* snapshot button */
+    .snap-btn {
+      background: transparent;
+      border: 1px solid var(--yellow);
+      clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
+      padding: 4px 18px;
+      color: var(--yellow);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.68rem; letter-spacing: 2px;
+      cursor: pointer; text-transform: uppercase; flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .snap-btn:hover  { background: rgba(245,197,24,0.12); }
+    .snap-btn.flash  { background: var(--yellow); color: #000; }
+
+    /* signal bars */
+    .signal-bars {
+      display: flex; align-items: flex-end; gap: 2px; height: 14px;
+    }
+    .signal-bar { width: 4px; background: var(--border2); transition: background 0.4s; }
+    .signal-bar.b1 { height: 4px; }
+    .signal-bar.b2 { height: 7px; }
+    .signal-bar.b3 { height: 10px; }
+    .signal-bar.b4 { height: 14px; }
+    .signal-bar.active      { background: var(--cyan); }
+    .signal-bar.active.warn { background: var(--orange); }
+    .signal-bar.active.crit { background: var(--magenta); }
+    .signal-dbm { color: var(--dim); font-size: 0.6rem; }
+
+    /* battery bar */
+    .battery-bar-wrap {
+      width: 52px; height: 6px;
+      background: var(--border); overflow: hidden;
+      border: 1px solid var(--border2);
+    }
+    .battery-bar {
+      height: 100%;
+      transition: width 0.5s ease, background 0.5s ease;
+    }
+
+    /* push power panel to right */
+    #power-panel { margin-left: auto; }
+
+    /* ── MAIN LAYOUT ── */
+    .main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── VIDEO PANEL ── */
+    .video-panel {
       flex: 1;
-      overflow-y: auto;
-      padding: 8px 0;
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+      background: var(--bg);
+      position: relative;
+    }
+    .video-wrap {
+      position: relative;
+      display: inline-block;
+      line-height: 0;
+    }
+    .video-wrap img {
+      max-width: 100%; max-height: calc(100vh - 120px);
+      border: 1px solid var(--border);
+      display: block;
+    }
+    /* HUD corner brackets */
+    .corner {
+      position: absolute; width: 18px; height: 18px;
+      border-color: var(--yellow); border-style: solid;
+    }
+    .corner.tl { top: -1px; left: -1px;  border-width: 2px 0 0 2px; }
+    .corner.tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
+    .corner.bl { bottom: -1px; left: -1px;  border-width: 0 0 2px 2px; }
+    .corner.br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+
+    /* ── SIDEBAR ── */
+    .sidebar {
+      width: 290px;
+      border-left: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      background: var(--panel2);
+      flex-shrink: 0;
+    }
+
+    .sec-header {
+      padding: 8px 14px;
+      font-size: 0.65rem; color: var(--dim);
+      letter-spacing: 2px; text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sec-header::before {
+      content: '◆';
+      color: var(--yellow); font-size: 0.5rem;
+    }
+
+    #event-log {
+      flex: 1; overflow-y: auto; padding: 6px 0;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
     }
     .event {
-      padding: 8px 14px;
-      border-bottom: 1px solid #161616;
-      animation: fadeIn 0.3s ease;
+      padding: 7px 14px;
+      border-bottom: 1px solid var(--border);
+      animation: fadeIn 0.25s ease;
     }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
-    .event-time { font-size: 0.65rem; color: #444; margin-bottom: 4px; }
-    .event-empty { font-size: 0.75rem; color: #333; font-style: italic; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; } }
+    .event-time { font-size: 0.6rem; color: var(--dim); margin-bottom: 4px; }
+    .event-empty { font-size: 0.7rem; color: var(--border2); font-style: italic; }
+
     .tag {
-      display: inline-block;
-      margin: 2px 3px 2px 0;
-      padding: 1px 7px;
-      border-radius: 3px;
-      font-size: 0.7rem;
-      font-weight: bold;
+      display: inline-block; margin: 2px 3px 2px 0;
+      padding: 1px 8px;
+      font-size: 0.67rem; font-weight: bold;
+      clip-path: polygon(4px 0%, 100% 0%, calc(100% - 4px) 100%, 0% 100%);
     }
-    .tag-person { background: #1a0a2e; color: #cc88ff; border: 1px solid #440088; }
-    .tag-object { background: #0a1a0a; color: #00cc66; border: 1px solid #005522; }
+    .tag-person { background: rgba(255,0,60,0.15);  color: #ff6688; border: 1px solid rgba(255,0,60,0.4); }
+    .tag-object { background: rgba(0,212,255,0.12); color: var(--cyan); border: 1px solid rgba(0,212,255,0.3); }
+
+    /* ── SYSTEM STATS ── */
+    .sys-panel {
+      border-top: 1px solid var(--border);
+      padding: 10px 14px;
+      display: flex; flex-direction: column; gap: 8px;
+      flex-shrink: 0;
+    }
+    .stat-row { display: flex; align-items: center; gap: 8px; }
+    .stat-label {
+      font-size: 0.6rem; color: var(--dim);
+      text-transform: uppercase; width: 34px; flex-shrink: 0;
+      letter-spacing: 1px;
+    }
+    .stat-bar-wrap {
+      flex: 1; height: 4px; background: var(--border); overflow: hidden;
+    }
+    .stat-bar {
+      height: 100%;
+      transition: width 0.5s ease, background 0.5s ease;
+    }
+    .stat-value {
+      font-size: 0.65rem; text-align: right;
+      width: 56px; flex-shrink: 0;
+    }
+    .stat-value.ok   { color: var(--cyan); }
+    .stat-value.warn { color: var(--orange); }
+    .stat-value.crit { color: var(--magenta); }
+
+    .temp-warn {
+      font-size: 0.62rem; color: var(--magenta);
+      text-align: center; letter-spacing: 2px;
+      animation: blink 0.8s step-start infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
   </style>
 </head>
 <body>
   <header>
-    <div id="status-dot"></div>
-    <h1>TONY THE BOT &mdash; MONITOR</h1>
-    <div class="counts" id="counts"></div>
-    <div class="power-panel" style="margin-left:0">
-      <span class="power-label">CAM</span>
-      <span class="power-value ok" id="fps-cam">--</span>
-      <span class="power-label">fps</span>
-      &nbsp;
-      <span class="power-label">STREAM</span>
-      <span class="power-value ok" id="fps-stream">--</span>
-      <span class="power-label">fps</span>
-      &nbsp;
-      <span class="power-label">YOLO</span>
-      <span class="power-value" id="fps-yolo">--</span>
-      <span class="power-label">fps</span>
+    <div class="brand">
+      <span class="brand-title">// TONY_MONITOR</span>
+      <span class="brand-sub">NEURAL SURVEILLANCE SYSTEM v2.0</span>
     </div>
-    <div class="power-panel" id="power-panel">
-      <span class="power-icon" id="power-icon">⚡</span>
-      <span class="power-label">POWER</span>
-      <span class="power-value" id="power-status">--</span>
+    <div id="status-dot"></div>
+
+    <div class="counts" id="counts"></div>
+
+    <button class="snap-btn" id="snap-btn" onclick="takeSnapshot()">&#9654; SNAPSHOT</button>
+
+    <!-- WiFi signal -->
+    <div class="hchip">
+      <div class="signal-bars">
+        <div class="signal-bar b1" id="sig1"></div>
+        <div class="signal-bar b2" id="sig2"></div>
+        <div class="signal-bar b3" id="sig3"></div>
+        <div class="signal-bar b4" id="sig4"></div>
+      </div>
+      <span class="hlabel">WIFI</span>
+      <span class="signal-dbm" id="signal-dbm">-- dBm</span>
+    </div>
+
+    <!-- FPS chip -->
+    <div class="hchip">
+      <span class="hlabel">CAM</span>
+      <span class="hval ok" id="fps-cam">--</span>
+      <span class="hlabel">fps</span>
+      &nbsp;
+      <span class="hlabel">STR</span>
+      <span class="hval ok" id="fps-stream">--</span>
+      <span class="hlabel">fps</span>
+      &nbsp;
+      <span class="hlabel">AI</span>
+      <span class="hval" id="fps-yolo">--</span>
+      <span class="hlabel">fps</span>
+    </div>
+
+    <!-- Power chip -->
+    <div class="hchip" id="power-panel">
+      <span class="hlabel">PWR</span>
+      <span class="hval" id="power-status">--</span>
       <div id="battery-bar-wrap" class="battery-bar-wrap" style="display:none">
         <div id="battery-bar" class="battery-bar"></div>
       </div>
-      <span class="power-value" id="battery-pct" style="display:none"></span>
-      <span class="power-value" id="battery-v" style="display:none"></span>
+      <span class="hval" id="battery-pct" style="display:none"></span>
+      <span class="hval" style="color:var(--dim)" id="battery-v" style="display:none"></span>
     </div>
   </header>
 
   <div class="main">
     <div class="video-panel">
-      <img src="/video_feed" alt="Live feed">
+      <div class="video-wrap">
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+        <img src="/video_feed" alt="Live feed">
+      </div>
     </div>
+
     <div class="sidebar">
-      <div class="sidebar-header">Detection Events</div>
+      <div class="sec-header">Detection Events</div>
       <div id="event-log"></div>
+
+      <div class="sys-panel">
+        <div class="sec-header" style="padding:0 0 4px 0; border:none">System</div>
+        <div class="stat-row">
+          <span class="stat-label">CPU</span>
+          <div class="stat-bar-wrap"><div class="stat-bar" id="cpu-bar"></div></div>
+          <span class="stat-value" id="cpu-val">--%</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">RAM</span>
+          <div class="stat-bar-wrap"><div class="stat-bar" id="ram-bar"></div></div>
+          <span class="stat-value" id="ram-val">--%</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">TEMP</span>
+          <div class="stat-bar-wrap"><div class="stat-bar" id="temp-bar"></div></div>
+          <span class="stat-value" id="temp-val">-- °C</span>
+        </div>
+        <div id="temp-warn" class="temp-warn" style="display:none">⚠ THERMAL ALERT</div>
+      </div>
     </div>
   </div>
 
@@ -531,100 +783,124 @@ def index():
       div.className = 'event';
       if (ev.objects.length === 0) {
         div.innerHTML = `<div class="event-time">${ev.timestamp}</div>
-                         <div class="event-empty">nothing detected</div>`;
+                         <div class="event-empty">// null detection</div>`;
       } else {
         div.innerHTML = `<div class="event-time">${ev.timestamp}</div>
                          ${ev.objects.map(tagHTML).join('')}`;
         updateCounts(ev.objects);
       }
       log.prepend(div);
-
-      // Keep log from growing too large in the DOM
       while (log.children.length > 80) log.removeChild(log.lastChild);
     }
 
-    // Load history on page open
     fetch('/detections').then(r => r.json()).then(data => {
       data.history.slice().reverse().forEach(addEvent);
       dot.classList.add('live');
     });
 
-    // SSE for real-time updates
     const es = new EventSource('/events');
     es.onmessage = e => { addEvent(JSON.parse(e.data)); };
     es.onerror = () => dot.classList.remove('live');
     es.onopen  = () => dot.classList.add('live');
 
-    // Power panel — poll every 6 seconds
     function updatePower() {
       fetch('/power').then(r => r.json()).then(p => {
-        const icon   = document.getElementById('power-icon');
         const status = document.getElementById('power-status');
         const bar    = document.getElementById('battery-bar');
         const barWrap= document.getElementById('battery-bar-wrap');
         const pctEl  = document.getElementById('battery-pct');
         const vEl    = document.getElementById('battery-v');
 
-        // Under-voltage / throttle warning
         if (p.under_voltage || p.throttled) {
-          icon.textContent = '⚠️';
-          status.textContent = p.throttled ? 'THROTTLED' : 'UNDER-VOLTAGE';
-          status.className = 'power-value crit';
+          status.textContent = p.throttled ? 'THROTTLED' : 'UV!';
+          status.className = 'hval crit';
         } else if (p.source === 'wall' || p.source === 'unknown') {
-          icon.textContent = '🔌';
-          status.textContent = 'PLUGGED IN';
-          status.className = 'power-value ok';
+          status.textContent = 'AC';
+          status.className = 'hval ok';
         } else if (p.source === 'charging') {
-          icon.textContent = '🔋';
-          status.textContent = 'CHARGING';
-          status.className = 'power-value ok';
+          status.textContent = 'CHG';
+          status.className = 'hval ok';
         } else {
-          icon.textContent = '🔋';
-          status.textContent = 'BATTERY';
-          status.className = 'power-value ok';
+          status.textContent = 'BATT';
+          status.className = 'hval ok';
         }
 
-        // Battery gauge (only shown when INA219 is connected)
         if (p.battery_pct !== null) {
           const pct = p.battery_pct;
           barWrap.style.display = 'block';
           pctEl.style.display   = 'inline';
           vEl.style.display     = 'inline';
           bar.style.width       = pct + '%';
-          bar.style.background  = pct > 50 ? '#00ff88' : pct > 20 ? '#ffcc00' : '#ff4444';
+          bar.style.background  = pct > 50 ? 'var(--cyan)' : pct > 20 ? 'var(--orange)' : 'var(--magenta)';
           pctEl.textContent     = pct.toFixed(0) + '%';
-          pctEl.className       = 'power-value ' + (pct > 50 ? 'ok' : pct > 20 ? 'warn' : 'crit');
+          pctEl.className       = 'hval ' + (pct > 50 ? 'ok' : pct > 20 ? 'warn' : 'crit');
           vEl.textContent       = p.voltage + 'V';
-          vEl.className         = 'power-value';
-          if (pct <= 10) {
-            icon.textContent = '🪫';
-            status.textContent = 'LOW BATTERY';
-            status.className = 'power-value crit';
-          }
+          if (pct <= 10) { status.textContent = 'LOW'; status.className = 'hval crit'; }
         } else {
           barWrap.style.display = 'none';
           pctEl.style.display   = 'none';
           vEl.style.display     = 'none';
         }
       }).catch(() => {
-        document.getElementById('power-status').textContent = 'N/A';
+        document.getElementById('power-status').textContent = 'ERR';
       });
     }
-
     updatePower();
     setInterval(updatePower, 6000);
+
+    function setBar(barId, valId, pct, value, threshWarn, threshCrit) {
+      const bar = document.getElementById(barId);
+      const val = document.getElementById(valId);
+      const cls   = pct >= threshCrit ? 'crit' : pct >= threshWarn ? 'warn' : 'ok';
+      const color = pct >= threshCrit ? 'var(--magenta)' : pct >= threshWarn ? 'var(--orange)' : 'var(--cyan)';
+      bar.style.width      = pct + '%';
+      bar.style.background = color;
+      val.textContent      = value;
+      val.className        = 'stat-value ' + cls;
+    }
 
     function updateStats() {
       fetch('/stats').then(r => r.json()).then(s => {
         document.getElementById('fps-cam').textContent    = s.fps_camera;
         document.getElementById('fps-stream').textContent = s.fps_stream;
         const yoloEl = document.getElementById('fps-yolo');
-        yoloEl.textContent  = s.fps_yolo;
-        yoloEl.className    = 'power-value ' + (s.fps_yolo >= 3 ? 'ok' : 'warn');
+        yoloEl.textContent = s.fps_yolo;
+        yoloEl.className   = 'hval ' + (s.fps_yolo >= 3 ? 'ok' : 'warn');
+
+        if (s.cpu_pct !== null) setBar('cpu-bar', 'cpu-val', s.cpu_pct, s.cpu_pct.toFixed(0) + '%', 70, 90);
+        if (s.ram_pct !== null) setBar('ram-bar', 'ram-val', s.ram_pct, s.ram_used + '/' + s.ram_total + 'MB', 75, 90);
+        if (s.temp_c  !== null) {
+          const tempPct = Math.min(100, ((s.temp_c - 30) / 60) * 100);
+          setBar('temp-bar', 'temp-val', tempPct, s.temp_c + ' °C', 60, 75);
+          document.getElementById('temp-warn').style.display = s.temp_c >= 80 ? 'block' : 'none';
+        }
+
+        const q = s.signal_quality, dbm = s.signal_dbm;
+        if (q !== null) {
+          const bars = Math.ceil(q / 25);
+          const cls  = q >= 60 ? 'active' : q >= 35 ? 'active warn' : 'active crit';
+          for (let i = 1; i <= 4; i++) {
+            const el = document.getElementById('sig' + i);
+            el.className = 'signal-bar b' + i + (i <= bars ? ' ' + cls : '');
+          }
+          document.getElementById('signal-dbm').textContent = dbm + ' dBm';
+        }
       });
     }
     updateStats();
     setInterval(updateStats, 2000);
+
+    function takeSnapshot() {
+      const btn = document.getElementById('snap-btn');
+      btn.classList.add('flash');
+      btn.textContent = '✓ CAPTURED';
+      const a = document.createElement('a');
+      a.href = '/snapshot'; a.download = ''; a.click();
+      setTimeout(() => {
+        btn.classList.remove('flash');
+        btn.innerHTML = '&#9654; SNAPSHOT';
+      }, 1200);
+    }
   </script>
 </body>
 </html>"""
