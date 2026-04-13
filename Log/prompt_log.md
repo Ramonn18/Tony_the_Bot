@@ -301,3 +301,61 @@ lets make the detection event a floating cell with round edges as well
 All 10 checks passed. Restart:
 
 ---
+
+---
+
+**[2026-04-13 13:58:27] User:**
+i want to chage the resolution of the camera to 1920 by 1080 is that possible?
+
+**[2026-04-13 14:02:40] Assistant:**
+Good. Now restart:
+
+---
+
+---
+
+**[2026-04-13 14:06:30] User:**
+in the system monitor lets make the ui resposive so that the cells don't overlap with eachother.
+
+**[2026-04-13 14:11:00] Assistant:**
+All 10 checks passed. Restart:
+
+---
+
+---
+
+**[2026-04-13 14:11:08] User:**
+3
+
+**[2026-04-13 14:11:15] Assistant:**
+Live at **`http://10.1.65.108:8000`**.
+
+**How the responsiveness works:**
+
+Each panel now has a `▾` chevron in its header. Click it (or use the keyboard) to collapse that panel down to just its title bar, freeing up space:
+
+| Action | Effect |
+|---|---|
+| Click `▾` on System | Collapses to just "System ▸" bar |
+| Click `▾` on Battery Monitor | Collapses to just "Battery Monitor ▸" bar |
+| Click `▾` on Detection Events | Collapses to just its title bar |
+| Click `▸` on any | Expands it back |
+| Key `1` | Toggle System panel |
+| Key `2` | Toggle Battery panel |
+| Key `3` | Toggle Detection panel |
+
+- When System collapses, Battery automatically slides up (they're in the same flex column)
+- When Detection collapses, the panel shrinks to ~34px so it's out of the way
+- Collapse states are instant — no janky reflows
+
+---
+
+---
+
+**[2026-04-13 14:15:32] User:**
+can we create a grid where the cells can snap into place so that these arent overlapping the video feed?
+
+**[2026-04-13 14:21:31] Assistant:**
+Server is live and already receiving requests from your Mac. Clean up the patch script:
+
+---
