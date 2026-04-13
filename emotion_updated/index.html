@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Confusion Detector Prototype</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- p5.js 1.x -->
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.min.js"></script>
+
+  <!-- ml5.js 1.x -->
+  <script src="https://unpkg.com/ml5@1/dist/ml5.js"></script>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div>
+        <h1>Confusion Detection Prototype</h1>
+        <p class="subtitle">
+          Real-time browser prototype using facial landmarks and hand cues
+        </p>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card camera-card">
+        <div class="card-header">
+          <h2>Live Camera</h2>
+          <span id="system-pill" class="pill idle">Idle</span>
+        </div>
+        <div id="canvas-wrapper"></div>
+        <p class="hint">
+          Keep your face and at least one hand visible. Press <strong>D</strong> to toggle debug points.
+        </p>
+      </section>
+
+      <aside class="sidebar">
+        <section class="card">
+          <h3>Controls</h3>
+          <div class="controls">
+            <button id="startBtn">Start Detection</button>
+            <button id="stopBtn" class="secondary">Stop</button>
+            <button id="resetBtn" class="ghost">Reset</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Current State</h3>
+          <div id="emotionState" class="state neutral">Neutral</div>
+          <div class="confidence-wrap">
+            <div class="confidence-label-row">
+              <span>Confidence</span>
+              <span id="confidenceText">0%</span>
+            </div>
+            <div class="confidence-track">
+              <div id="confidenceFill" class="confidence-fill"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Active Cues</h3>
+          <div class="metric">
+            <span>Eyebrows</span>
+            <span id="eyebrowValue">0.00</span>
+          </div>
+          <div class="metric">
+            <span>Head Direction</span>
+            <span id="headValue">0.00</span>
+          </div>
+          <div class="metric">
+            <span>Hands Near Face</span>
+            <span id="handValue">0.00</span>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Status Note</h3>
+          <p id="statusNote" class="note">
+            Press Start to begin real-time confusion detection.
+          </p>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script src="sketch.js"></script>
+</body>
+</html>
