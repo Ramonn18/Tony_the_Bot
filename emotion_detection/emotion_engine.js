@@ -52,18 +52,17 @@ var EmotionEngine = (function () {
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
-  function lerp(a, b, t) { return a + (b - a) * t; }
   function clamp01(v) { return Math.max(0, Math.min(1, v)); }
   function smooth(prev, cur, alpha) { return prev * (1 - alpha) + cur * alpha; }
 
   // Running smoothed values
-  var prev = { confusion: 0, happy: 0, sad: 0, surprised: 0, neutral: 0 };
+  var prev = { confusion: 0, happy: 0, surprised: 0, neutral: 0 };
   var ALPHA = 0.35;
 
   /**
    * Analyze 468 keypoints and return emotion scores.
    * @param {Array} kp - array of {x, y, z} keypoints from FaceMesh
-   * @returns {Object} {confusion, happy, sad, surprised, neutral, dominant}
+   * @returns {Object} {confusion, happy, surprised, neutral, dominant}
    */
   function analyze(kp) {
     if (!kp || kp.length < 468) return null;
@@ -94,7 +93,6 @@ var EmotionEngine = (function () {
     var mouthW    = norm(dist(p(LM.MOUTH_LEFT), p(LM.MOUTH_RIGHT)));
     var mouthH    = norm(dist(p(LM.MOUTH_TOP), p(LM.MOUTH_BOTTOM)));
     var mouthOpen = mouthH / (mouthW + 0.001);
-    var lipGap    = norm(dist(p(LM.UPPER_LIP_TOP), p(LM.LOWER_LIP_BOTTOM)));
 
     // Mouth corner vertical position relative to mouth center
     var mouthCenterY = (p(LM.MOUTH_TOP).y + p(LM.MOUTH_BOTTOM).y) / 2;
@@ -107,25 +105,29 @@ var EmotionEngine = (function () {
     var headTilt    = Math.abs(leftCheekY - rightCheekY) / faceH;
 
     // ═══════════════════════════════════════
-    //  CONFUSION  (prioritized)
+    //  CONFUSION  (prioritized, boosted weights)
     //  AU4 (brow furrow) + AU7 (eye squint) + oblique brows + head tilt + lip compression
     // ═══════════════════════════════════════
-    var browFurrow   = clamp01((0.18 - innerBrowDist) / 0.06);  // closer inner brows = more furrow
-    var eyeSquint    = clamp01((0.28 - avgEAR) / 0.10);         // smaller EAR = more squint
-    var browLower    = clamp01((0.08 - avgBrowH) / 0.03);       // lower brows
-    var tiltScore    = clamp01((headTilt - 0.015) / 0.04);      // head tilt
-    var lipCompress  = clamp01((0.02 - mouthOpen) / 0.012);     // compressed lips
+    var browFurrow   = clamp01((0.18 - innerBrowDist) / 0.05);   // tighter threshold
+    var eyeSquint    = clamp01((0.28 - avgEAR) / 0.08);          // tighter threshold
+    var browLower    = clamp01((0.08 - avgBrowH) / 0.025);       // tighter threshold
+    var tiltScore    = clamp01((headTilt - 0.012) / 0.035);      // more sensitive to tilt
+    var lipCompress  = clamp01((0.02 - mouthOpen) / 0.012);
 
     // Asymmetric brows (one raised, one lowered) common in confusion
-    var browAsymmetry = clamp01(Math.abs(leftBrowH - rightBrowH) / 0.025);
+    var browAsymmetry = clamp01(Math.abs(leftBrowH - rightBrowH) / 0.02);
+
+    // Frown component — downturned mouth contributes to confusion (was in sad)
+    var frownScore    = clamp01((-smileRatio - 0.002) / 0.015);
 
     var confusion = clamp01(
-      browFurrow   * 0.30 +
-      eyeSquint    * 0.20 +
-      browLower    * 0.10 +
-      tiltScore    * 0.15 +
-      lipCompress  * 0.10 +
-      browAsymmetry * 0.15
+      browFurrow    * 0.25 +
+      eyeSquint     * 0.20 +
+      browLower     * 0.10 +
+      tiltScore     * 0.15 +
+      lipCompress   * 0.05 +
+      browAsymmetry * 0.15 +
+      frownScore    * 0.10
     );
 
     // ═══════════════════════════════════════
@@ -136,36 +138,27 @@ var EmotionEngine = (function () {
     var happy = clamp01(smileScore * 0.65 + mouthWide * 0.35);
 
     // ═══════════════════════════════════════
-    //  SAD — inner brows raised, down-turned mouth
-    // ═══════════════════════════════════════
-    var innerBrowRaise = clamp01((avgBrowH - 0.09) / 0.03);
-    var frownScore     = clamp01((-smileRatio - 0.003) / 0.018);
-    var sad = clamp01(innerBrowRaise * 0.45 + frownScore * 0.55);
-
-    // ═══════════════════════════════════════
     //  SURPRISED — wide eyes, raised brows, open mouth
     // ═══════════════════════════════════════
-    var wideEyes   = clamp01((avgEAR - 0.32) / 0.10);
-    var highBrows  = clamp01((avgBrowH - 0.10) / 0.04);
+    var wideEyes      = clamp01((avgEAR - 0.32) / 0.10);
+    var highBrows     = clamp01((avgBrowH - 0.10) / 0.04);
     var mouthWideOpen = clamp01((mouthOpen - 0.35) / 0.25);
-    var surprised  = clamp01(wideEyes * 0.35 + highBrows * 0.35 + mouthWideOpen * 0.30);
+    var surprised     = clamp01(wideEyes * 0.35 + highBrows * 0.35 + mouthWideOpen * 0.30);
 
     // ═══════════════════════════════════════
     //  NEUTRAL — inverse of all others
     // ═══════════════════════════════════════
-    var maxEmotion = Math.max(confusion, happy, sad, surprised);
+    var maxEmotion = Math.max(confusion, happy, surprised);
     var neutral    = clamp01(1 - maxEmotion * 1.5);
 
     // Smooth values
     confusion = smooth(prev.confusion, confusion, ALPHA);
     happy     = smooth(prev.happy, happy, ALPHA);
-    sad       = smooth(prev.sad, sad, ALPHA);
     surprised = smooth(prev.surprised, surprised, ALPHA);
     neutral   = smooth(prev.neutral, neutral, ALPHA);
 
     prev.confusion = confusion;
     prev.happy     = happy;
-    prev.sad       = sad;
     prev.surprised = surprised;
     prev.neutral   = neutral;
 
@@ -173,7 +166,6 @@ var EmotionEngine = (function () {
     var emotions = [
       { name: 'confusion', score: confusion },
       { name: 'happy',     score: happy },
-      { name: 'sad',       score: sad },
       { name: 'surprised', score: surprised },
       { name: 'neutral',   score: neutral },
     ];
@@ -182,7 +174,6 @@ var EmotionEngine = (function () {
     return {
       confusion:  Math.round(confusion * 100),
       happy:      Math.round(happy * 100),
-      sad:        Math.round(sad * 100),
       surprised:  Math.round(surprised * 100),
       neutral:    Math.round(neutral * 100),
       dominant:   emotions[0].name,
@@ -190,7 +181,7 @@ var EmotionEngine = (function () {
   }
 
   function reset() {
-    prev = { confusion: 0, happy: 0, sad: 0, surprised: 0, neutral: 0 };
+    prev = { confusion: 0, happy: 0, surprised: 0, neutral: 0 };
   }
 
   return { analyze: analyze, reset: reset };

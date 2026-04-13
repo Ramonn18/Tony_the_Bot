@@ -11,9 +11,9 @@ var EmotionUI = (function () {
   var alertEl    = null;
   var bars       = {};
   var badgeEl    = null;
-  var EMOTIONS   = ['confusion', 'happy', 'sad', 'surprised', 'neutral'];
-  var LABELS     = { confusion: 'CONFUSION', happy: 'HAPPY', sad: 'SAD', surprised: 'SURPRISED', neutral: 'NEUTRAL' };
-  var COLORS     = { confusion: 'var(--magenta)', happy: 'var(--yellow)', sad: 'var(--cyan)', surprised: 'var(--orange)', neutral: 'var(--text2)' };
+  var EMOTIONS   = ['confusion', 'happy', 'surprised', 'neutral'];
+  var LABELS     = { confusion: 'CONFUSION', happy: 'HAPPY', surprised: 'SURPRISED', neutral: 'NEUTRAL' };
+  var COLORS     = { confusion: 'var(--magenta)', happy: 'var(--yellow)', surprised: 'var(--orange)', neutral: 'var(--text2)' };
 
   function init() {
     injectToggleButton();
