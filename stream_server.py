@@ -337,11 +337,10 @@ def power():
     # --- vcgencmd throttle / under-voltage check ---
     try:
         out = subprocess.check_output(["vcgencmd", "get_throttled"], text=True).strip()
-        # e.g. "throttled=0x0" or "throttled=0x50000"
         hex_val = int(out.split("=")[1], 16)
         result["throttle_raw"] = hex(hex_val)
-        result["under_voltage"] = bool(hex_val & 0x1)        # bit 0: currently under-voltage
-        result["throttled"] = bool(hex_val & 0x4)            # bit 2: currently throttled
+        result["under_voltage"] = bool(hex_val & 0x1)
+        result["throttled"] = bool(hex_val & 0x4)
         result["source"] = "wall"
     except Exception:
         pass
@@ -399,507 +398,1021 @@ def index():
   <meta charset="UTF-8">
   <title>// TONY_MONITOR</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --yellow:  #f5c518;
       --cyan:    #00d4ff;
       --magenta: #ff003c;
       --orange:  #ff8c00;
-      --bg:      #080810;
-      --panel:   #0d0d1a;
-      --panel2:  #0a0a16;
-      --border:  #1a1a33;
-      --border2: #22223a;
-      --text:    #c8c8d8;
-      --dim:     #44445a;
+      --green:   #00e676;
+      --bg:      #0b0b12;
+      --surface: #0e0e1a;
+      --card:    #121224;
+      --border:  rgba(255,255,255,0.06);
+      --borderb: rgba(255,255,255,0.11);
+      --text:    #e8e8f0;
+      --text2:   #55557a;
+      --dim:     #222238;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Share Tech Mono', monospace;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
+      background: var(--bg); color: var(--text);
+      font-family: 'Inter', sans-serif;
+      height: 100vh; display: flex; overflow: hidden;
     }
-
-    /* ── SCANLINE OVERLAY ── */
     body::after {
-      content: '';
-      position: fixed; inset: 0;
-      background: repeating-linear-gradient(
-        to bottom,
-        transparent 0px,
-        transparent 3px,
-        rgba(0,0,0,0.08) 3px,
-        rgba(0,0,0,0.08) 4px
-      );
-      pointer-events: none;
-      z-index: 9999;
+      content: ''; position: fixed; inset: 0;
+      background: repeating-linear-gradient(to bottom,
+        transparent 0px, transparent 3px, rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px);
+      pointer-events: none; z-index: 9999;
     }
 
-    /* ── HEADER ── */
-    header {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      padding: 0 20px;
-      height: 52px;
-      background: var(--panel);
+    /* ── LEFT NAV ── */
+    .leftnav {
+      width: 158px; background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; flex-shrink: 0;
+    }
+    .nav-brand {
+      padding: 16px 14px 13px;
       border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-      position: relative;
     }
-    /* yellow left accent bar */
-    header::before {
-      content: '';
-      position: absolute;
-      left: 0; top: 0; bottom: 0;
-      width: 3px;
-      background: var(--yellow);
+    .nav-brand-title {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.78rem; color: var(--yellow); letter-spacing: 3px; display: block;
+    }
+    .nav-brand-sub {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.46rem; color: var(--text2); letter-spacing: 1px;
+      display: block; margin-top: 4px;
+    }
+    .nav-section { padding: 8px 6px; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+    .nav-group-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.42rem; color: var(--text2); letter-spacing: 2px;
+      padding: 6px 8px 3px; text-transform: uppercase;
+    }
+    .nav-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 7px 9px; border-radius: 5px;
+      cursor: pointer; transition: all 0.15s; user-select: none;
+    }
+    .nav-item:hover { background: rgba(255,255,255,0.04); }
+    .nav-item.active { background: rgba(245,197,24,0.09); }
+    .nav-icon { font-size: 0.8rem; width: 15px; text-align: center; flex-shrink: 0; color: var(--text2); }
+    .nav-text {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.56rem;
+      color: var(--text2); letter-spacing: 1px; text-transform: uppercase;
+    }
+    .nav-item.active .nav-icon,
+    .nav-item.active .nav-text { color: var(--yellow); }
+    .nav-item:hover .nav-icon,
+    .nav-item:hover .nav-text { color: var(--text); }
+    .nav-spacer { flex: 1; }
+    .nav-bottom {
+      padding: 8px 6px; border-top: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 1px;
     }
 
-    .brand {
-      display: flex; flex-direction: column; line-height: 1.1;
+    /* ── APP SHELL ── */
+    .app { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+    /* ── TOP BAR ── */
+    .topbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 16px; height: 48px; flex-shrink: 0;
+      background: var(--surface); border-bottom: 1px solid var(--border);
     }
     .brand-title {
-      font-family: 'Rajdhani', sans-serif;
-      font-size: 1.1rem; font-weight: 700;
-      color: var(--yellow);
-      letter-spacing: 3px;
-      text-transform: uppercase;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.72rem; color: var(--yellow); letter-spacing: 3px; white-space: nowrap;
     }
-    .brand-sub {
-      font-size: 0.55rem;
-      color: var(--dim);
-      letter-spacing: 2px;
-    }
-
     #status-dot {
-      width: 8px; height: 8px; border-radius: 50%;
+      width: 6px; height: 6px; border-radius: 50%;
       background: var(--dim); flex-shrink: 0;
       transition: background 0.3s, box-shadow 0.3s;
     }
-    #status-dot.live {
-      background: var(--cyan);
-      box-shadow: 0 0 8px var(--cyan);
-    }
-
-    .counts { display: flex; gap: 8px; flex-wrap: wrap; }
+    #status-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .h-spacer { flex: 1; }
+    .counts { display: flex; gap: 4px; flex-wrap: wrap; }
     .count-badge {
-      background: rgba(0,212,255,0.06);
-      border: 1px solid rgba(0,212,255,0.2);
-      clip-path: polygon(6px 0%, 100% 0%, calc(100% - 6px) 100%, 0% 100%);
-      padding: 2px 12px;
-      font-size: 0.68rem;
-      color: var(--dim);
-      letter-spacing: 1px;
+      background: rgba(0,212,255,0.05); border: 1px solid rgba(0,212,255,0.14);
+      border-radius: 4px; padding: 2px 7px;
+      font-size: 0.56rem; color: var(--text2); font-family: 'Share Tech Mono', monospace;
     }
     .count-badge span { color: var(--cyan); }
-
-    /* header chip shared style */
-    .hchip {
-      display: flex; align-items: center; gap: 8px;
-      background: rgba(255,255,255,0.03);
-      border: 1px solid var(--border2);
-      padding: 4px 12px;
-      font-size: 0.68rem;
-      flex-shrink: 0;
+    .hbtn {
+      background: transparent; border: 1px solid var(--borderb);
+      color: var(--text2); font-family: 'Share Tech Mono', monospace;
+      font-size: 0.56rem; letter-spacing: 1px; cursor: pointer;
+      padding: 5px 10px; text-transform: uppercase; border-radius: 4px;
+      transition: all 0.15s; flex-shrink: 0;
     }
-    .hlabel { color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
-    .hval   { color: var(--text); font-weight: bold; }
-    .hval.ok   { color: var(--cyan); }
-    .hval.warn { color: var(--orange); }
-    .hval.crit { color: var(--magenta); animation: blink 0.8s step-start infinite; }
-
-    /* snapshot button */
+    .hbtn:hover { color: var(--cyan); border-color: var(--cyan); }
+    .hbtn.active { color: var(--yellow); border-color: var(--yellow); background: rgba(245,197,24,0.07); }
     .snap-btn {
-      background: transparent;
-      border: 1px solid var(--yellow);
-      clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
-      padding: 4px 18px;
-      color: var(--yellow);
+      background: var(--yellow); border: none; color: #000;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.56rem;
+      letter-spacing: 2px; cursor: pointer; text-transform: uppercase;
+      padding: 5px 12px; border-radius: 4px; transition: opacity 0.15s; flex-shrink: 0;
+    }
+    .snap-btn:hover { opacity: 0.85; }
+    .snap-btn.flash { background: #fff; }
+
+    /* ── TAB BAR ── */
+    .tabbar {
+      display: flex; align-items: center;
+      padding: 0 16px; height: 36px; flex-shrink: 0;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+    }
+    .tab {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.56rem; letter-spacing: 2px;
+      color: var(--text2); padding: 0 14px; height: 100%;
+      display: flex; align-items: center; cursor: pointer;
+      text-transform: uppercase; border-bottom: 2px solid transparent;
+      transition: all 0.15s; user-select: none;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--yellow); border-bottom-color: var(--yellow); }
+
+    /* ── SHORTCUTS OVERLAY ── */
+    .shortcuts-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.85); z-index: 10000;
+      align-items: center; justify-content: center;
+    }
+    .shortcuts-overlay.show { display: flex; }
+    .shortcuts-box {
+      background: var(--card); border: 1px solid var(--yellow);
+      border-radius: 8px; padding: 22px 30px; min-width: 270px;
+    }
+    .shortcuts-box h2 {
+      font-family: 'Share Tech Mono', monospace; color: var(--yellow);
+      font-size: 0.75rem; letter-spacing: 3px; margin-bottom: 14px;
+    }
+    .shortcut-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 0; border-bottom: 1px solid var(--border);
+    }
+    .shortcut-row:last-child { border-bottom: none; }
+    .kbd {
+      background: var(--bg); border: 1px solid var(--text2);
+      border-radius: 3px; padding: 2px 7px; color: var(--yellow);
+      font-family: 'Share Tech Mono', monospace; font-size: 0.58rem; min-width: 28px; text-align: center;
+    }
+    .shortcut-desc { color: var(--text2); font-family: 'Share Tech Mono', monospace; font-size: 0.58rem; }
+
+    /* ── CONTENT ── */
+    .content { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+
+    /* ── LEFT PANEL ── */
+    .left-panel {
+      flex: 1; min-width: 0; display: flex; flex-direction: column;
+      padding: 12px; gap: 9px; overflow: hidden;
+    }
+
+    /* AgentOS-style total counter row */
+    .total-row {
+      display: flex; align-items: flex-end; gap: 0; flex-shrink: 0;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 14px;
+    }
+    .total-block { display: flex; flex-direction: column; gap: 1px; }
+    .total-label {
       font-family: 'Share Tech Mono', monospace;
-      font-size: 0.68rem; letter-spacing: 2px;
-      cursor: pointer; text-transform: uppercase; flex-shrink: 0;
-      transition: background 0.15s;
+      font-size: 0.5rem; color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
     }
-    .snap-btn:hover  { background: rgba(245,197,24,0.12); }
-    .snap-btn.flash  { background: var(--yellow); color: #000; }
-
-    /* signal bars */
-    .signal-bars {
-      display: flex; align-items: flex-end; gap: 2px; height: 14px;
+    .total-number {
+      font-family: 'Rajdhani', sans-serif; font-size: 2.2rem; font-weight: 700;
+      color: var(--text); line-height: 1; letter-spacing: -1px;
     }
-    .signal-bar { width: 4px; background: var(--border2); transition: background 0.4s; }
-    .signal-bar.b1 { height: 4px; }
-    .signal-bar.b2 { height: 7px; }
-    .signal-bar.b3 { height: 10px; }
-    .signal-bar.b4 { height: 14px; }
-    .signal-bar.active      { background: var(--cyan); }
-    .signal-bar.active.warn { background: var(--orange); }
-    .signal-bar.active.crit { background: var(--magenta); }
-    .signal-dbm { color: var(--dim); font-size: 0.6rem; }
-
-    /* battery bar */
-    .battery-bar-wrap {
-      width: 52px; height: 6px;
-      background: var(--border); overflow: hidden;
-      border: 1px solid var(--border2);
+    .total-delta {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.5rem;
+      color: var(--green); letter-spacing: 1px;
     }
-    .battery-bar {
-      height: 100%;
-      transition: width 0.5s ease, background 0.5s ease;
+    .total-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      border-radius: 20px; padding: 3px 10px;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.56rem; letter-spacing: 1px;
+      background: rgba(0,230,118,0.07); border: 1px solid rgba(0,230,118,0.22); color: var(--green);
     }
-
-    /* push power panel to right */
-    #power-panel { margin-left: auto; }
-
-    /* ── MAIN LAYOUT ── */
-    .main { display: flex; flex: 1; overflow: hidden; }
-
-    /* ── VIDEO PANEL ── */
-    .video-panel {
-      flex: 1;
-      display: flex; align-items: center; justify-content: center;
-      padding: 16px;
-      background: var(--bg);
-      position: relative;
+    .hero-badge.warn { background: rgba(255,140,0,0.07); border-color: rgba(255,140,0,0.22); color: var(--orange); }
+    .hero-badge.crit { background: rgba(255,0,60,0.07); border-color: rgba(255,0,60,0.22); color: var(--magenta); animation: blink 1s step-start infinite; }
+    .frame-count {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.52rem; color: var(--text2);
     }
+    .frame-count span { color: var(--cyan); font-size: 0.9rem; font-family: 'Rajdhani', sans-serif; font-weight: 600; }
+
+    /* video */
     .video-wrap {
-      position: relative;
-      display: inline-block;
-      line-height: 0;
+      flex: 1; min-height: 0; position: relative;
+      display: flex; align-items: center; justify-content: center;
+      background: #050508; border: 1px solid var(--border);
+      border-radius: 8px; overflow: hidden; cursor: pointer;
     }
     .video-wrap img {
-      max-width: 100%; max-height: calc(100vh - 120px);
-      border: 1px solid var(--border);
-      display: block;
+      max-width: 100%; max-height: 100%; display: block;
+      object-fit: contain; transition: opacity 0.2s;
     }
-    /* HUD corner brackets */
+    .video-wrap.paused img { opacity: 0.2; }
     .corner {
-      position: absolute; width: 18px; height: 18px;
+      position: absolute; width: 16px; height: 16px;
       border-color: var(--yellow); border-style: solid;
+      transition: border-color 0.3s; z-index: 2;
     }
-    .corner.tl { top: -1px; left: -1px;  border-width: 2px 0 0 2px; }
-    .corner.tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
-    .corner.bl { bottom: -1px; left: -1px;  border-width: 0 0 2px 2px; }
-    .corner.br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+    .corner.tl { top:8px; left:8px;    border-width: 2px 0 0 2px; }
+    .corner.tr { top:8px; right:8px;   border-width: 2px 2px 0 0; }
+    .corner.bl { bottom:8px; left:8px; border-width: 0 0 2px 2px; }
+    .corner.br { bottom:8px; right:8px;border-width: 0 2px 2px 0; }
+    .video-wrap.paused .corner { border-color: var(--magenta); }
+    .pause-label {
+      display: none; position: absolute; inset: 0;
+      align-items: center; justify-content: center;
+      font-family: 'Rajdhani', sans-serif; font-size: 1.2rem; font-weight: 700;
+      letter-spacing: 4px; color: var(--magenta); pointer-events: none; z-index: 3;
+    }
+    .video-wrap.paused .pause-label { display: flex; }
+    .video-wrap:fullscreen, .video-wrap:-webkit-full-screen {
+      display: flex; align-items: center; justify-content: center;
+      background: #000; width: 100%; height: 100%;
+    }
+    .video-wrap:fullscreen img, .video-wrap:-webkit-full-screen img { max-width:100%; max-height:100%; }
 
-    /* ── SIDEBAR ── */
-    .sidebar {
-      width: 290px;
-      border-left: 1px solid var(--border);
+    /* stat strip */
+    .stat-strip {
+      display: flex; flex-shrink: 0;
+      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    }
+    .strip-stat {
+      flex: 1; padding: 6px 10px; background: var(--surface);
+      display: flex; flex-direction: column; gap: 2px;
+      border-right: 1px solid var(--border);
+    }
+    .strip-stat:last-child { border-right: none; }
+    .strip-label { font-family: 'Share Tech Mono', monospace; font-size: 0.48rem; color: var(--text2); letter-spacing: 1px; text-transform: uppercase; }
+    .strip-value { font-family: 'Rajdhani', sans-serif; font-size: 0.95rem; font-weight: 600; color: var(--text); }
+    .strip-value.ok   { color: var(--cyan); }
+    .strip-value.warn { color: var(--orange); }
+    .strip-value.crit { color: var(--magenta); }
+
+    /* ── RIGHT COLUMN ── */
+    .right-col {
+      width: 370px; flex-shrink: 0;
       display: flex; flex-direction: column;
-      background: var(--panel2);
-      flex-shrink: 0;
+      padding: 12px 12px 12px 0; gap: 9px; overflow: hidden;
     }
 
-    .sec-header {
-      padding: 8px 14px;
-      font-size: 0.65rem; color: var(--dim);
-      letter-spacing: 2px; text-transform: uppercase;
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; gap: 6px;
+    /* ── GAUGE ROW — 3 circular gauges (AgentOS style) ── */
+    .gauge-row { display: flex; gap: 8px; flex-shrink: 0; }
+    .gauge-card {
+      flex: 1; background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 11px 8px 9px;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      position: relative; overflow: hidden; min-width: 0;
     }
-    .sec-header::before {
-      content: '◆';
-      color: var(--yellow); font-size: 0.5rem;
+    .gauge-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    }
+    .gauge-card.g-cpu::before  { background: linear-gradient(90deg, var(--yellow) 0%, transparent 100%); }
+    .gauge-card.g-ram::before  { background: linear-gradient(90deg, var(--cyan) 0%, transparent 100%); }
+    .gauge-card.g-temp::before { background: linear-gradient(90deg, var(--magenta) 0%, transparent 100%); }
+    .gauge-eyebrow {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.48rem;
+      color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
+    }
+    .gauge-svg { width: 68px; height: 68px; }
+    .gauge-val {
+      font-family: 'Rajdhani', sans-serif; font-size: 1.05rem; font-weight: 700;
+      line-height: 1; color: var(--text); text-align: center;
+    }
+    .gauge-sub {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.44rem;
+      color: var(--text2); letter-spacing: 1px; text-align: center;
     }
 
-    #event-log {
-      flex: 1; overflow-y: auto; padding: 6px 0;
-      scrollbar-width: thin;
-      scrollbar-color: var(--border) transparent;
+    /* ── TWO CARDS ROW ── */
+    .cards-row { display: flex; gap: 8px; flex-shrink: 0; }
+    .card {
+      flex: 1; background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px;
+      display: flex; flex-direction: column; gap: 6px;
+      position: relative; overflow: hidden; min-width: 0;
     }
-    .event {
-      padding: 7px 14px;
-      border-bottom: 1px solid var(--border);
-      animation: fadeIn 0.25s ease;
+    .card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
     }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; } }
-    .event-time { font-size: 0.6rem; color: var(--dim); margin-bottom: 4px; }
-    .event-empty { font-size: 0.7rem; color: var(--border2); font-style: italic; }
+    .card-scan::before { background: linear-gradient(90deg, var(--cyan) 0%, transparent 100%); }
+    .card-sys::before  { background: linear-gradient(90deg, var(--yellow) 0%, transparent 100%); }
+    .card-eyebrow {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.52rem;
+      color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
+    }
+    .card-title {
+      font-family: 'Rajdhani', sans-serif; font-size: 0.92rem; font-weight: 600;
+      color: var(--text); line-height: 1.1;
+    }
+    .card-badge {
+      display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;
+      border-radius: 4px; padding: 2px 7px;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.5rem; letter-spacing: 1px;
+    }
+    .card-badge.ok   { background: rgba(0,230,118,0.07); border: 1px solid rgba(0,230,118,0.2); color: var(--green); }
+    .card-badge.warn { background: rgba(255,140,0,0.07); border: 1px solid rgba(255,140,0,0.2); color: var(--orange); }
+    .card-badge.crit { background: rgba(255,0,60,0.07);  border: 1px solid rgba(255,0,60,0.2);  color: var(--magenta); }
+    .card-badge.info { background: rgba(0,212,255,0.07); border: 1px solid rgba(0,212,255,0.2); color: var(--cyan); }
+    .card-body { flex: 1; min-height: 0; }
+    .card-action {
+      background: transparent; border: 1px solid var(--borderb);
+      color: var(--text2); font-family: 'Share Tech Mono', monospace;
+      font-size: 0.5rem; letter-spacing: 1px; cursor: pointer;
+      padding: 6px 10px; width: 100%; text-align: center;
+      text-transform: uppercase; border-radius: 5px; transition: all 0.15s;
+    }
+    .card-scan .card-action:hover { color: var(--cyan);   border-color: var(--cyan); }
+    .card-sys  .card-action:hover { color: var(--yellow); border-color: var(--yellow); }
 
+    /* detection tags */
     .tag {
-      display: inline-block; margin: 2px 3px 2px 0;
-      padding: 1px 8px;
-      font-size: 0.67rem; font-weight: bold;
-      clip-path: polygon(4px 0%, 100% 0%, calc(100% - 4px) 100%, 0% 100%);
+      display: inline-block; margin: 2px 2px 2px 0; padding: 1px 6px;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.53rem; border-radius: 3px;
     }
-    .tag-person { background: rgba(255,0,60,0.15);  color: #ff6688; border: 1px solid rgba(255,0,60,0.4); }
-    .tag-object { background: rgba(0,212,255,0.12); color: var(--cyan); border: 1px solid rgba(0,212,255,0.3); }
+    .tag-person { background: rgba(255,0,60,0.1); color: #ff6688; border: 1px solid rgba(255,0,60,0.25); }
+    .tag-object { background: rgba(0,212,255,0.07); color: var(--cyan); border: 1px solid rgba(0,212,255,0.2); }
+    .no-detect  { font-family: 'Share Tech Mono', monospace; font-size: 0.56rem; color: var(--text2); }
 
-    /* ── SYSTEM STATS ── */
-    .sys-panel {
-      border-top: 1px solid var(--border);
-      padding: 10px 14px;
-      display: flex; flex-direction: column; gap: 8px;
-      flex-shrink: 0;
+    /* sys card kv rows */
+    .kv-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px 0; border-bottom: 1px solid var(--border);
     }
-    .stat-row { display: flex; align-items: center; gap: 8px; }
-    .stat-label {
-      font-size: 0.6rem; color: var(--dim);
-      text-transform: uppercase; width: 34px; flex-shrink: 0;
-      letter-spacing: 1px;
-    }
-    .stat-bar-wrap {
-      flex: 1; height: 4px; background: var(--border); overflow: hidden;
-    }
-    .stat-bar {
-      height: 100%;
-      transition: width 0.5s ease, background 0.5s ease;
-    }
-    .stat-value {
-      font-size: 0.65rem; text-align: right;
-      width: 56px; flex-shrink: 0;
-    }
-    .stat-value.ok   { color: var(--cyan); }
-    .stat-value.warn { color: var(--orange); }
-    .stat-value.crit { color: var(--magenta); }
+    .kv-row:last-child { border-bottom: none; }
+    .kv-label { font-family: 'Share Tech Mono', monospace; font-size: 0.48rem; color: var(--text2); letter-spacing: 1px; }
+    .kv-val   { font-family: 'Rajdhani', sans-serif; font-size: 0.82rem; font-weight: 600; color: var(--text); }
+    .kv-val.ok   { color: var(--cyan); }
+    .kv-val.warn { color: var(--orange); }
+    .kv-val.crit { color: var(--magenta); }
 
-    .temp-warn {
-      font-size: 0.62rem; color: var(--magenta);
-      text-align: center; letter-spacing: 2px;
-      animation: blink 0.8s step-start infinite;
+    /* battery bar */
+    .batt-wrap { height: 3px; background: var(--dim); border-radius: 2px; overflow: hidden; margin-top: 3px; }
+    .batt-bar  { height: 100%; border-radius: 2px; transition: width 0.5s, background 0.5s; }
+
+    /* ── BOTTOM CARD ── */
+    .bottom-card {
+      flex: 1; min-height: 0; background: var(--card);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 12px; display: flex; flex-direction: column; gap: 7px;
     }
+    .bc-header { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .bc-title {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.52rem;
+      color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
+    }
+    .bc-actions { margin-left: auto; display: flex; gap: 4px; }
+    .mini-btn {
+      background: none; border: 1px solid var(--border);
+      color: var(--text2); font-family: 'Share Tech Mono', monospace;
+      font-size: 0.48rem; letter-spacing: 1px; cursor: pointer;
+      padding: 2px 7px; text-transform: uppercase; border-radius: 3px; transition: all 0.15s;
+    }
+    .mini-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+
+    /* AgentOS-style primary metric */
+    .perf-row { display: flex; align-items: baseline; gap: 7px; flex-shrink: 0; }
+    .perf-big { font-family: 'Rajdhani', sans-serif; font-size: 1.8rem; font-weight: 700; color: var(--text); line-height: 1; }
+    .perf-unit { font-family: 'Share Tech Mono', monospace; font-size: 0.56rem; color: var(--text2); }
+    .perf-badge {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.48rem; letter-spacing: 1px;
+      padding: 1px 6px; border-radius: 3px; margin-left: 3px;
+    }
+    .perf-badge.ok   { background: rgba(0,230,118,0.07); color: var(--green); border: 1px solid rgba(0,230,118,0.18); }
+    .perf-badge.warn { background: rgba(255,140,0,0.07); color: var(--orange); border: 1px solid rgba(255,140,0,0.18); }
+    .perf-badge.crit { background: rgba(255,0,60,0.07);  color: var(--magenta); border: 1px solid rgba(255,0,60,0.18); }
+    .perf-aside { margin-left: auto; font-family: 'Share Tech Mono', monospace; font-size: 0.52rem; color: var(--text2); }
+
+    /* filled sparkline */
+    #spark-canvas { width: 100%; flex-shrink: 0; display: block; }
+
+    /* dot grid — detection activity distribution */
+    .dot-grid {
+      display: grid; grid-template-columns: repeat(40, 1fr);
+      gap: 2px; flex-shrink: 0; padding: 2px 0;
+    }
+    .dot-cell {
+      aspect-ratio: 1; border-radius: 2px;
+      background: var(--dim); transition: background 0.4s;
+    }
+    .dot-cell.hot  { background: var(--yellow); }
+    .dot-cell.warm { background: var(--orange); opacity: 0.75; }
+    .dot-cell.cool { background: var(--cyan); opacity: 0.45; }
+
+    /* event log */
+    #event-log { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
+    .ev-item { padding: 4px 0; border-bottom: 1px solid var(--border); animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(-2px); } to { opacity:1; } }
+    .ev-time { font-family: 'Share Tech Mono', monospace; font-size: 0.5rem; color: var(--text2); margin-bottom: 2px; }
+    .ev-empty { font-family: 'Share Tech Mono', monospace; font-size: 0.55rem; color: var(--dim); font-style: italic; }
+
     @keyframes blink { 50% { opacity: 0; } }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <span class="brand-title">// TONY_MONITOR</span>
-      <span class="brand-sub">NEURAL SURVEILLANCE SYSTEM v2.0</span>
-    </div>
-    <div id="status-dot"></div>
 
-    <div class="counts" id="counts"></div>
-
-    <button class="snap-btn" id="snap-btn" onclick="takeSnapshot()">&#9654; SNAPSHOT</button>
-
-    <!-- WiFi signal -->
-    <div class="hchip">
-      <div class="signal-bars">
-        <div class="signal-bar b1" id="sig1"></div>
-        <div class="signal-bar b2" id="sig2"></div>
-        <div class="signal-bar b3" id="sig3"></div>
-        <div class="signal-bar b4" id="sig4"></div>
-      </div>
-      <span class="hlabel">WIFI</span>
-      <span class="signal-dbm" id="signal-dbm">-- dBm</span>
-    </div>
-
-    <!-- FPS chip -->
-    <div class="hchip">
-      <span class="hlabel">CAM</span>
-      <span class="hval ok" id="fps-cam">--</span>
-      <span class="hlabel">fps</span>
-      &nbsp;
-      <span class="hlabel">STR</span>
-      <span class="hval ok" id="fps-stream">--</span>
-      <span class="hlabel">fps</span>
-      &nbsp;
-      <span class="hlabel">AI</span>
-      <span class="hval" id="fps-yolo">--</span>
-      <span class="hlabel">fps</span>
-    </div>
-
-    <!-- Power chip -->
-    <div class="hchip" id="power-panel">
-      <span class="hlabel">PWR</span>
-      <span class="hval" id="power-status">--</span>
-      <div id="battery-bar-wrap" class="battery-bar-wrap" style="display:none">
-        <div id="battery-bar" class="battery-bar"></div>
-      </div>
-      <span class="hval" id="battery-pct" style="display:none"></span>
-      <span class="hval" style="color:var(--dim)" id="battery-v" style="display:none"></span>
-    </div>
-  </header>
-
-  <div class="main">
-    <div class="video-panel">
-      <div class="video-wrap">
-        <div class="corner tl"></div>
-        <div class="corner tr"></div>
-        <div class="corner bl"></div>
-        <div class="corner br"></div>
-        <img src="/video_feed" alt="Live feed">
-      </div>
-    </div>
-
-    <div class="sidebar">
-      <div class="sec-header">Detection Events</div>
-      <div id="event-log"></div>
-
-      <div class="sys-panel">
-        <div class="sec-header" style="padding:0 0 4px 0; border:none">System</div>
-        <div class="stat-row">
-          <span class="stat-label">CPU</span>
-          <div class="stat-bar-wrap"><div class="stat-bar" id="cpu-bar"></div></div>
-          <span class="stat-value" id="cpu-val">--%</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">RAM</span>
-          <div class="stat-bar-wrap"><div class="stat-bar" id="ram-bar"></div></div>
-          <span class="stat-value" id="ram-val">--%</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">TEMP</span>
-          <div class="stat-bar-wrap"><div class="stat-bar" id="temp-bar"></div></div>
-          <span class="stat-value" id="temp-val">-- °C</span>
-        </div>
-        <div id="temp-warn" class="temp-warn" style="display:none">⚠ THERMAL ALERT</div>
-      </div>
+  <!-- shortcuts overlay -->
+  <div class="shortcuts-overlay" id="shortcuts-overlay" onclick="toggleShortcuts()">
+    <div class="shortcuts-box" onclick="event.stopPropagation()">
+      <h2>// KEYBOARD SHORTCUTS</h2>
+      <div class="shortcut-row"><span class="kbd">S</span><span class="shortcut-desc">Take snapshot</span></div>
+      <div class="shortcut-row"><span class="kbd">F</span><span class="shortcut-desc">Toggle fullscreen</span></div>
+      <div class="shortcut-row"><span class="kbd">Space</span><span class="shortcut-desc">Pause / resume stream</span></div>
+      <div class="shortcut-row"><span class="kbd">A</span><span class="shortcut-desc">Toggle sound alerts</span></div>
+      <div class="shortcut-row"><span class="kbd">C</span><span class="shortcut-desc">Clear event log</span></div>
+      <div class="shortcut-row"><span class="kbd">E</span><span class="shortcut-desc">Export event log</span></div>
+      <div class="shortcut-row"><span class="kbd">?</span><span class="shortcut-desc">Show / hide shortcuts</span></div>
+      <div class="shortcut-row"><span class="kbd">Esc</span><span class="shortcut-desc">Close overlay</span></div>
     </div>
   </div>
 
-  <script>
-    const log = document.getElementById('event-log');
-    const countsEl = document.getElementById('counts');
-    const dot = document.getElementById('status-dot');
-    const counts = {};
+  <!-- ── LEFT NAV ── -->
+  <nav class="leftnav">
+    <div class="nav-brand">
+      <span class="nav-brand-title">// TONY</span>
+      <span class="nav-brand-sub">NEURAL SURVEILLANCE v3.1</span>
+    </div>
+    <div class="nav-section">
+      <span class="nav-group-label">Monitor</span>
+      <div class="nav-item active">
+        <span class="nav-icon">&#9673;</span>
+        <span class="nav-text">Live Feed</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon">&#8853;</span>
+        <span class="nav-text">Detection</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon">&#8779;</span>
+        <span class="nav-text">System</span>
+      </div>
+      <span class="nav-group-label" style="margin-top:6px;">Tools</span>
+      <div class="nav-item">
+        <span class="nav-icon">&#8801;</span>
+        <span class="nav-text">Event Log</span>
+      </div>
+      <div class="nav-item" onclick="takeSnapshot()">
+        <span class="nav-icon">&#9635;</span>
+        <span class="nav-text">Snapshot</span>
+      </div>
+    </div>
+    <div class="nav-bottom">
+      <div class="nav-item" onclick="toggleShortcuts()">
+        <span class="nav-icon">&#9881;</span>
+        <span class="nav-text">Shortcuts</span>
+      </div>
+    </div>
+  </nav>
 
-    function tagHTML(obj) {
-      const isPerson = obj.label === 'person';
-      const cls = isPerson ? 'tag-person' : 'tag-object';
-      return `<span class="tag ${cls}">${obj.label} ${Math.round(obj.confidence * 100)}%</span>`;
+  <!-- ── APP ── -->
+  <div class="app">
+
+    <!-- TOP BAR -->
+    <div class="topbar">
+      <span class="brand-title">TONY_MONITOR</span>
+      <div id="status-dot"></div>
+      <div class="h-spacer"></div>
+      <div class="counts" id="counts"></div>
+      <button class="hbtn" id="pause-btn" onclick="togglePause()">&#9646;&#9646; PAUSE</button>
+      <button class="hbtn" id="sound-btn" onclick="toggleSound()">&#128264; SOUND</button>
+      <button class="snap-btn" id="snap-btn" onclick="takeSnapshot()">&#9654; SNAPSHOT</button>
+    </div>
+
+    <!-- TAB BAR -->
+    <div class="tabbar">
+      <div class="tab active">Overview</div>
+      <div class="tab">Neural</div>
+      <div class="tab">System</div>
+      <div class="tab">Events</div>
+    </div>
+
+    <!-- CONTENT -->
+    <div class="content">
+
+      <!-- ── LEFT: VIDEO HERO ── -->
+      <div class="left-panel">
+
+        <!-- AgentOS total counter -->
+        <div class="total-row">
+          <div class="total-block">
+            <span class="total-label">Total Objects Detected</span>
+            <span class="total-number" id="total-detections">0</span>
+            <span class="total-delta" id="total-delta">&#9650; session active</span>
+          </div>
+          <div class="total-right">
+            <span class="hero-badge" id="hero-badge">&#9679; SCANNING</span>
+            <span class="frame-count">IN FRAME&nbsp;&nbsp;<span id="frame-count-num">0</span></span>
+          </div>
+        </div>
+
+        <!-- live video -->
+        <div class="video-wrap" id="video-wrap" onclick="toggleFullscreen()">
+          <div class="corner tl"></div><div class="corner tr"></div>
+          <div class="corner bl"></div><div class="corner br"></div>
+          <img id="stream-img" src="/video_feed" alt="Live feed">
+          <div class="pause-label">&#9646;&#9646; PAUSED</div>
+        </div>
+
+        <!-- stat strip -->
+        <div class="stat-strip">
+          <div class="strip-stat">
+            <span class="strip-label">Cam FPS</span>
+            <span class="strip-value ok" id="fps-cam">--</span>
+          </div>
+          <div class="strip-stat">
+            <span class="strip-label">Stream FPS</span>
+            <span class="strip-value ok" id="fps-stream">--</span>
+          </div>
+          <div class="strip-stat">
+            <span class="strip-label">AI FPS</span>
+            <span class="strip-value" id="fps-yolo">--</span>
+          </div>
+          <div class="strip-stat">
+            <span class="strip-label">Temp</span>
+            <span class="strip-value" id="strip-temp">-- &deg;C</span>
+          </div>
+          <div class="strip-stat">
+            <span class="strip-label">Uptime</span>
+            <span class="strip-value" id="uptime-val">0m 0s</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── RIGHT COLUMN ── -->
+      <div class="right-col">
+
+        <!-- GAUGE ROW: CPU / RAM / TEMP -->
+        <div class="gauge-row">
+          <div class="gauge-card g-cpu">
+            <span class="gauge-eyebrow">CPU</span>
+            <svg class="gauge-svg" viewBox="0 0 68 68">
+              <circle cx="34" cy="34" r="27" fill="none" stroke="var(--dim)" stroke-width="5"/>
+              <circle id="gauge-cpu-arc" cx="34" cy="34" r="27" fill="none" stroke="var(--yellow)" stroke-width="5"
+                stroke-linecap="round" stroke-dasharray="0 169.6"
+                transform="rotate(-90 34 34)" style="transition:stroke-dasharray 0.6s ease;"/>
+            </svg>
+            <span class="gauge-val" id="gauge-cpu-val">--%</span>
+            <span class="gauge-sub" id="gauge-cpu-sub">PROCESSOR</span>
+          </div>
+          <div class="gauge-card g-ram">
+            <span class="gauge-eyebrow">RAM</span>
+            <svg class="gauge-svg" viewBox="0 0 68 68">
+              <circle cx="34" cy="34" r="27" fill="none" stroke="var(--dim)" stroke-width="5"/>
+              <circle id="gauge-ram-arc" cx="34" cy="34" r="27" fill="none" stroke="var(--cyan)" stroke-width="5"
+                stroke-linecap="round" stroke-dasharray="0 169.6"
+                transform="rotate(-90 34 34)" style="transition:stroke-dasharray 0.6s ease;"/>
+            </svg>
+            <span class="gauge-val" id="gauge-ram-val">--%</span>
+            <span class="gauge-sub" id="gauge-ram-sub">MEMORY</span>
+          </div>
+          <div class="gauge-card g-temp">
+            <span class="gauge-eyebrow">TEMP</span>
+            <svg class="gauge-svg" viewBox="0 0 68 68">
+              <circle cx="34" cy="34" r="27" fill="none" stroke="var(--dim)" stroke-width="5"/>
+              <circle id="gauge-temp-arc" cx="34" cy="34" r="27" fill="none" stroke="var(--magenta)" stroke-width="5"
+                stroke-linecap="round" stroke-dasharray="0 169.6"
+                transform="rotate(-90 34 34)" style="transition:stroke-dasharray 0.6s ease;"/>
+            </svg>
+            <span class="gauge-val" id="gauge-temp-val">-- &deg;C</span>
+            <span class="gauge-sub">THERMAL</span>
+          </div>
+        </div>
+
+        <!-- TWO CARDS: Neural Scan + System -->
+        <div class="cards-row">
+
+          <!-- NEURAL SCAN -->
+          <div class="card card-scan">
+            <span class="card-eyebrow">&#8853; Neural Scan</span>
+            <span class="card-title">Object Detection</span>
+            <span class="card-badge info" id="scan-status">SCANNING</span>
+            <div class="card-body" id="scan-tags">
+              <span class="no-detect">Awaiting objects...</span>
+            </div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:0.48rem;color:var(--text2);" id="scan-time">&mdash;</div>
+            <button class="card-action" onclick="clearLog()">Clear Log &rarr;</button>
+          </div>
+
+          <!-- SYSTEM STATUS -->
+          <div class="card card-sys">
+            <span class="card-eyebrow">&#8779; System</span>
+            <span class="card-title">Health Status</span>
+            <span class="card-badge ok" id="sys-status">NOMINAL</span>
+            <div class="card-body">
+              <div class="kv-row">
+                <span class="kv-label">WiFi</span>
+                <span class="kv-val ok" id="signal-qual">--%</span>
+              </div>
+              <div class="kv-row">
+                <span class="kv-label">Signal</span>
+                <span class="kv-val" style="font-family:'Share Tech Mono',monospace;font-size:0.52rem;" id="signal-dbm">-- dBm</span>
+              </div>
+              <div class="kv-row">
+                <span class="kv-label">Power</span>
+                <span class="kv-val ok" id="power-status">--</span>
+              </div>
+              <div class="kv-row">
+                <span class="kv-label">Battery</span>
+                <span class="kv-val" id="battery-pct-chip">N/A</span>
+              </div>
+              <div id="battery-bar-wrap" class="batt-wrap" style="display:none">
+                <div id="battery-bar" class="batt-bar"></div>
+              </div>
+            </div>
+            <button class="card-action" onclick="toggleShortcuts()">Diagnostics &rarr;</button>
+          </div>
+        </div>
+
+        <!-- BOTTOM: activity + sparkline + dot grid + log -->
+        <div class="bottom-card">
+          <div class="bc-header">
+            <span class="bc-title">Activity Feed</span>
+            <div class="bc-actions">
+              <button class="mini-btn" onclick="exportLog()">&#8615; Export</button>
+              <button class="mini-btn" onclick="clearLog()">&#10005; Clear</button>
+            </div>
+          </div>
+
+          <div class="perf-row">
+            <span class="perf-big" id="perf-big">--</span>
+            <span class="perf-unit">% CPU</span>
+            <span class="perf-badge ok" id="perf-badge">NOMINAL</span>
+            <span class="perf-aside" id="perf-aside">-- &deg;C</span>
+          </div>
+
+          <canvas id="spark-canvas" height="38"></canvas>
+
+          <div class="dot-grid" id="dot-grid"></div>
+
+          <div id="event-log"></div>
+        </div>
+
+      </div><!-- /right-col -->
+    </div><!-- /content -->
+  </div><!-- /app -->
+
+  <script>
+    // ── STATE ──
+    const logEl     = document.getElementById('event-log');
+    const countsEl  = document.getElementById('counts');
+    const dot       = document.getElementById('status-dot');
+    const streamImg = document.getElementById('stream-img');
+    const videoWrap = document.getElementById('video-wrap');
+    const counts    = {};
+    let eventHistory  = [];
+    let totalDetected = 0;
+    let soundEnabled  = false;
+    let streamPaused  = false;
+    let audioCtx      = null;
+    const startTime   = Date.now();
+    const SPARK_N     = 45;
+    const spark       = { cpu: [], ram: [], temp: [] };
+    const CIRC        = 2 * Math.PI * 27; // ~169.6
+
+    // dot grid — 40 slots of rolling detection counts
+    const DOT_N      = 40;
+    const dotHistory = new Array(DOT_N).fill(0);
+    const dotGrid    = document.getElementById('dot-grid');
+    for (let i = 0; i < DOT_N; i++) {
+      const d = document.createElement('div');
+      d.className = 'dot-cell';
+      dotGrid.appendChild(d);
     }
 
+    // ── UPTIME ──
+    setInterval(() => {
+      const s  = Math.floor((Date.now() - startTime) / 1000);
+      const h  = Math.floor(s / 3600);
+      const m  = Math.floor((s % 3600) / 60);
+      const ss = s % 60;
+      document.getElementById('uptime-val').textContent =
+        (h ? h + 'h ' : '') + m + 'm ' + ss + 's';
+    }, 1000);
+
+    // ── SOUND ──
+    function getAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      return audioCtx;
+    }
+    function playBeep(freq, dur, vol) {
+      freq = freq || 880; dur = dur || 0.08; vol = vol || 0.18;
+      try {
+        const ctx = getAudioCtx(), osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = freq; osc.type = 'square';
+        gain.gain.setValueAtTime(vol, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + dur);
+      } catch(e) {}
+    }
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      const btn = document.getElementById('sound-btn');
+      btn.classList.toggle('active', soundEnabled);
+      btn.innerHTML = soundEnabled ? '&#128266; SOUND' : '&#128264; SOUND';
+      if (soundEnabled) playBeep(660, 0.06);
+    }
+
+    // ── PAUSE ──
+    function togglePause() {
+      streamPaused = !streamPaused;
+      const btn = document.getElementById('pause-btn');
+      if (streamPaused) {
+        streamImg.src = '';
+        videoWrap.classList.add('paused');
+        btn.classList.add('active');
+        btn.innerHTML = '&#9654; RESUME';
+      } else {
+        streamImg.src = '/video_feed';
+        videoWrap.classList.remove('paused');
+        btn.classList.remove('active');
+        btn.innerHTML = '&#9646;&#9646; PAUSE';
+      }
+    }
+
+    // ── FULLSCREEN ──
+    function toggleFullscreen() {
+      if (!document.fullscreenElement && !document.webkitFullscreenElement)
+        (videoWrap.requestFullscreen || videoWrap.webkitRequestFullscreen).call(videoWrap);
+      else
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    }
+
+    // ── SHORTCUTS ──
+    function toggleShortcuts() {
+      document.getElementById('shortcuts-overlay').classList.toggle('show');
+    }
+    document.addEventListener('keydown', e => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      switch (e.key.toLowerCase()) {
+        case 's':      takeSnapshot();     break;
+        case 'f':      toggleFullscreen(); break;
+        case ' ':      e.preventDefault(); togglePause(); break;
+        case 'a':      toggleSound();      break;
+        case 'c':      clearLog();         break;
+        case 'e':      exportLog();        break;
+        case '?':      toggleShortcuts();  break;
+        case 'escape': document.getElementById('shortcuts-overlay').classList.remove('show'); break;
+      }
+    });
+
+    // ── SVG GAUGES ──
+    function setGauge(arcId, pct) {
+      const arc  = document.getElementById(arcId);
+      const dash = (pct / 100) * CIRC;
+      arc.setAttribute('stroke-dasharray', dash + ' ' + CIRC);
+    }
+
+    // ── HERO + SCAN CARD ──
+    function updateHero(objects) {
+      document.getElementById('frame-count-num').textContent = objects.length;
+      const badge      = document.getElementById('hero-badge');
+      const scanStatus = document.getElementById('scan-status');
+      const tagsEl     = document.getElementById('scan-tags');
+      if (objects.length === 0) {
+        badge.className = 'hero-badge';
+        badge.innerHTML = '&#9679; CLEAR';
+        scanStatus.className = 'card-badge info';
+        scanStatus.textContent = 'SCANNING';
+        tagsEl.innerHTML = '<span class="no-detect">No objects in frame</span>';
+      } else {
+        const hasPerson = objects.some(o => o.label === 'person');
+        if (hasPerson) {
+          badge.className = 'hero-badge crit';
+          badge.innerHTML = '&#9679; PERSON DETECTED';
+          scanStatus.className = 'card-badge crit';
+          scanStatus.textContent = 'PERSON';
+        } else {
+          badge.className = 'hero-badge warn';
+          badge.innerHTML = '&#9679; OBJECTS DETECTED';
+          scanStatus.className = 'card-badge warn';
+          scanStatus.textContent = 'OBJECTS';
+        }
+        tagsEl.innerHTML = objects.map(o =>
+          '<span class="tag ' + (o.label === 'person' ? 'tag-person' : 'tag-object') + '">' +
+          o.label + ' ' + Math.round(o.confidence * 100) + '%</span>'
+        ).join('');
+      }
+    }
+
+    // ── DOT GRID ──
+    function updateDotGrid(objCount) {
+      dotHistory.push(objCount);
+      if (dotHistory.length > DOT_N) dotHistory.shift();
+      const cells  = dotGrid.children;
+      const maxVal = Math.max(1, ...dotHistory);
+      for (let i = 0; i < DOT_N; i++) {
+        const v = dotHistory[i] || 0;
+        const r = v / maxVal;
+        cells[i].className = 'dot-cell' + (r > 0.6 ? ' hot' : r > 0.2 ? ' warm' : r > 0 ? ' cool' : '');
+      }
+    }
+
+    // ── EVENT HANDLING ──
+    function tagHTML(obj) {
+      return '<span class="tag ' + (obj.label === 'person' ? 'tag-person' : 'tag-object') + '">' +
+             obj.label + ' ' + Math.round(obj.confidence * 100) + '%</span>';
+    }
     function updateCounts(objects) {
       objects.forEach(o => { counts[o.label] = (counts[o.label] || 0) + 1; });
       countsEl.innerHTML = Object.entries(counts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 6)
-        .map(([k, v]) => `<div class="count-badge">${k} <span>${v}</span></div>`)
-        .join('');
+        .sort((a,b) => b[1]-a[1]).slice(0,5)
+        .map(([k,v]) => '<div class="count-badge">' + k + ' <span>' + v + '</span></div>').join('');
     }
-
     function addEvent(ev) {
+      eventHistory.unshift(ev);
+      if (eventHistory.length > 500) eventHistory.pop();
+
+      if (ev.objects.length > 0) {
+        totalDetected += ev.objects.length;
+        document.getElementById('total-detections').textContent = totalDetected.toLocaleString();
+        document.getElementById('total-delta').innerHTML =
+          '&#9650; +' + ev.objects.length + ' &nbsp;&middot;&nbsp; ' + ev.timestamp;
+      }
+
+      updateHero(ev.objects);
+      updateDotGrid(ev.objects.length);
+      document.getElementById('scan-time').textContent = 'Last: ' + ev.timestamp;
+
+      if (soundEnabled && ev.objects.length > 0)
+        playBeep(ev.objects.some(o => o.label === 'person') ? 1047 : 660, 0.07);
+
       const div = document.createElement('div');
-      div.className = 'event';
+      div.className = 'ev-item';
       if (ev.objects.length === 0) {
-        div.innerHTML = `<div class="event-time">${ev.timestamp}</div>
-                         <div class="event-empty">// null detection</div>`;
+        div.innerHTML = '<div class="ev-time">' + ev.timestamp + '</div>' +
+                        '<div class="ev-empty">// no objects</div>';
       } else {
-        div.innerHTML = `<div class="event-time">${ev.timestamp}</div>
-                         ${ev.objects.map(tagHTML).join('')}`;
+        div.innerHTML = '<div class="ev-time">' + ev.timestamp + '</div>' +
+                        ev.objects.map(tagHTML).join('');
         updateCounts(ev.objects);
       }
-      log.prepend(div);
-      while (log.children.length > 80) log.removeChild(log.lastChild);
+      logEl.prepend(div);
+      while (logEl.children.length > 80) logEl.removeChild(logEl.lastChild);
     }
 
-    fetch('/detections').then(r => r.json()).then(data => {
-      data.history.slice().reverse().forEach(addEvent);
+    function clearLog()  { logEl.innerHTML = ''; }
+    function exportLog() {
+      const ts   = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const blob = new Blob([JSON.stringify(eventHistory, null, 2)], { type: 'application/json' });
+      const a    = Object.assign(document.createElement('a'),
+                     { href: URL.createObjectURL(blob), download: 'tony_events_' + ts + '.json' });
+      a.click(); URL.revokeObjectURL(a.href);
+    }
+
+    // ── SSE ──
+    fetch('/detections').then(r => r.json()).then(d => {
+      d.history.slice().reverse().forEach(addEvent);
       dot.classList.add('live');
     });
-
     const es = new EventSource('/events');
-    es.onmessage = e => { addEvent(JSON.parse(e.data)); };
-    es.onerror = () => dot.classList.remove('live');
-    es.onopen  = () => dot.classList.add('live');
+    es.onmessage = e => addEvent(JSON.parse(e.data));
+    es.onerror   = () => dot.classList.remove('live');
+    es.onopen    = () => dot.classList.add('live');
 
+    // ── POWER ──
     function updatePower() {
       fetch('/power').then(r => r.json()).then(p => {
-        const status = document.getElementById('power-status');
-        const bar    = document.getElementById('battery-bar');
-        const barWrap= document.getElementById('battery-bar-wrap');
-        const pctEl  = document.getElementById('battery-pct');
-        const vEl    = document.getElementById('battery-v');
-
+        const statusEl = document.getElementById('power-status');
+        const barWrap  = document.getElementById('battery-bar-wrap');
+        const bar      = document.getElementById('battery-bar');
+        const pctChip  = document.getElementById('battery-pct-chip');
         if (p.under_voltage || p.throttled) {
-          status.textContent = p.throttled ? 'THROTTLED' : 'UV!';
-          status.className = 'hval crit';
+          statusEl.textContent = p.throttled ? 'THROTTLED' : 'UNDER-V';
+          statusEl.className = 'kv-val crit';
         } else if (p.source === 'wall' || p.source === 'unknown') {
-          status.textContent = 'AC';
-          status.className = 'hval ok';
+          statusEl.textContent = 'AC POWER'; statusEl.className = 'kv-val ok';
         } else if (p.source === 'charging') {
-          status.textContent = 'CHG';
-          status.className = 'hval ok';
+          statusEl.textContent = 'CHARGING'; statusEl.className = 'kv-val ok';
         } else {
-          status.textContent = 'BATT';
-          status.className = 'hval ok';
+          statusEl.textContent = 'BATTERY'; statusEl.className = 'kv-val ok';
         }
-
         if (p.battery_pct !== null) {
           const pct = p.battery_pct;
           barWrap.style.display = 'block';
-          pctEl.style.display   = 'inline';
-          vEl.style.display     = 'inline';
-          bar.style.width       = pct + '%';
-          bar.style.background  = pct > 50 ? 'var(--cyan)' : pct > 20 ? 'var(--orange)' : 'var(--magenta)';
-          pctEl.textContent     = pct.toFixed(0) + '%';
-          pctEl.className       = 'hval ' + (pct > 50 ? 'ok' : pct > 20 ? 'warn' : 'crit');
-          vEl.textContent       = p.voltage + 'V';
-          if (pct <= 10) { status.textContent = 'LOW'; status.className = 'hval crit'; }
+          bar.style.width = pct + '%';
+          bar.style.background = pct > 50 ? 'var(--cyan)' : pct > 20 ? 'var(--orange)' : 'var(--magenta)';
+          pctChip.textContent = pct.toFixed(0) + '%';
+          pctChip.className = 'kv-val ' + (pct > 50 ? 'ok' : pct > 20 ? 'warn' : 'crit');
         } else {
           barWrap.style.display = 'none';
-          pctEl.style.display   = 'none';
-          vEl.style.display     = 'none';
+          pctChip.textContent = 'N/A';
+          pctChip.className = 'kv-val';
         }
-      }).catch(() => {
-        document.getElementById('power-status').textContent = 'ERR';
+      }).catch(() => {});
+    }
+    updatePower(); setInterval(updatePower, 6000);
+
+    // ── STATS + FILLED SPARKLINE ──
+    const canvas = document.getElementById('spark-canvas');
+    const ctx2   = canvas.getContext('2d');
+
+    function drawSparkline() {
+      const W = canvas.offsetWidth, H = 38;
+      canvas.width = W; canvas.height = H;
+      ctx2.clearRect(0, 0, W, H);
+      [
+        { data: spark.cpu,  stroke: '#f5c518', fill: 'rgba(245,197,24,0.13)',  label: 'CPU' },
+        { data: spark.ram,  stroke: '#00d4ff', fill: 'rgba(0,212,255,0.09)',   label: 'RAM' },
+        { data: spark.temp, stroke: '#ff003c', fill: 'rgba(255,0,60,0.07)',    label: 'TMP' },
+      ].forEach(({ data, stroke, fill, label }, si) => {
+        if (data.length < 2) return;
+        const step = W / (SPARK_N - 1);
+        const pts  = data.map((v, i) => ({
+          x: (SPARK_N - data.length + i) * step,
+          y: (H - 7) - (v / 100) * (H - 11)
+        }));
+        // filled area
+        ctx2.beginPath(); ctx2.fillStyle = fill;
+        pts.forEach((p, i) => i === 0 ? ctx2.moveTo(p.x, p.y) : ctx2.lineTo(p.x, p.y));
+        ctx2.lineTo(pts[pts.length-1].x, H); ctx2.lineTo(pts[0].x, H); ctx2.closePath();
+        ctx2.fill();
+        // stroke line
+        ctx2.beginPath(); ctx2.strokeStyle = stroke; ctx2.lineWidth = 1.5; ctx2.globalAlpha = 0.85;
+        pts.forEach((p, i) => i === 0 ? ctx2.moveTo(p.x, p.y) : ctx2.lineTo(p.x, p.y));
+        ctx2.stroke(); ctx2.globalAlpha = 1;
+        // legend label
+        ctx2.fillStyle = stroke;
+        ctx2.font = '8px Share Tech Mono, monospace';
+        ctx2.fillText(label, 4 + si * 36, H - 1);
       });
     }
-    updatePower();
-    setInterval(updatePower, 6000);
 
-    function setBar(barId, valId, pct, value, threshWarn, threshCrit) {
-      const bar = document.getElementById(barId);
-      const val = document.getElementById(valId);
-      const cls   = pct >= threshCrit ? 'crit' : pct >= threshWarn ? 'warn' : 'ok';
-      const color = pct >= threshCrit ? 'var(--magenta)' : pct >= threshWarn ? 'var(--orange)' : 'var(--cyan)';
-      bar.style.width      = pct + '%';
-      bar.style.background = color;
-      val.textContent      = value;
-      val.className        = 'stat-value ' + cls;
+    function updateSysCard(cpu, temp) {
+      const el = document.getElementById('sys-status');
+      const pb = document.getElementById('perf-badge');
+      if (temp > 80 || cpu > 90) {
+        el.textContent = 'CRITICAL'; el.className = 'card-badge crit';
+        pb.textContent = 'CRITICAL'; pb.className = 'perf-badge crit';
+      } else if (temp > 70 || cpu > 75) {
+        el.textContent = 'WARNING'; el.className = 'card-badge warn';
+        pb.textContent = 'WARNING'; pb.className = 'perf-badge warn';
+      } else {
+        el.textContent = 'NOMINAL'; el.className = 'card-badge ok';
+        pb.textContent = 'NOMINAL'; pb.className = 'perf-badge ok';
+      }
     }
 
     function updateStats() {
       fetch('/stats').then(r => r.json()).then(s => {
-        document.getElementById('fps-cam').textContent    = s.fps_camera;
-        document.getElementById('fps-stream').textContent = s.fps_stream;
-        const yoloEl = document.getElementById('fps-yolo');
-        yoloEl.textContent = s.fps_yolo;
-        yoloEl.className   = 'hval ' + (s.fps_yolo >= 3 ? 'ok' : 'warn');
+        document.getElementById('fps-cam').textContent    = s.fps_camera != null ? s.fps_camera : '--';
+        document.getElementById('fps-stream').textContent = s.fps_stream != null ? s.fps_stream : '--';
+        const yEl = document.getElementById('fps-yolo');
+        yEl.textContent = s.fps_yolo != null ? s.fps_yolo : '--';
+        yEl.className   = 'strip-value ' + (s.fps_yolo >= 3 ? 'ok' : 'warn');
 
-        if (s.cpu_pct !== null) setBar('cpu-bar', 'cpu-val', s.cpu_pct, s.cpu_pct.toFixed(0) + '%', 70, 90);
-        if (s.ram_pct !== null) setBar('ram-bar', 'ram-val', s.ram_pct, s.ram_used + '/' + s.ram_total + 'MB', 75, 90);
-        if (s.temp_c  !== null) {
-          const tempPct = Math.min(100, ((s.temp_c - 30) / 60) * 100);
-          setBar('temp-bar', 'temp-val', tempPct, s.temp_c + ' °C', 60, 75);
-          document.getElementById('temp-warn').style.display = s.temp_c >= 80 ? 'block' : 'none';
+        if (s.cpu_pct != null) {
+          setGauge('gauge-cpu-arc', s.cpu_pct);
+          document.getElementById('gauge-cpu-val').textContent = s.cpu_pct.toFixed(0) + '%';
+          document.getElementById('gauge-cpu-sub').textContent =
+            s.cpu_pct >= 90 ? 'CRITICAL' : s.cpu_pct >= 70 ? 'ELEVATED' : 'NOMINAL';
+          document.getElementById('perf-big').textContent = s.cpu_pct.toFixed(0);
+          spark.cpu.push(s.cpu_pct); if (spark.cpu.length > SPARK_N) spark.cpu.shift();
         }
+        if (s.ram_pct != null) {
+          setGauge('gauge-ram-arc', s.ram_pct);
+          document.getElementById('gauge-ram-val').textContent = s.ram_pct.toFixed(0) + '%';
+          document.getElementById('gauge-ram-sub').textContent =
+            (s.ram_used || '--') + '/' + (s.ram_total || '--') + 'MB';
+          spark.ram.push(s.ram_pct); if (spark.ram.length > SPARK_N) spark.ram.shift();
+        }
+        if (s.temp_c != null) {
+          const tp = Math.min(100, ((s.temp_c - 30) / 60) * 100);
+          setGauge('gauge-temp-arc', tp);
+          document.getElementById('gauge-temp-val').textContent = s.temp_c + ' \u00b0C';
+          const stripTemp = document.getElementById('strip-temp');
+          stripTemp.textContent = s.temp_c + ' \u00b0C';
+          stripTemp.className   = 'strip-value ' + (tp >= 75 ? 'crit' : tp >= 60 ? 'warn' : 'ok');
+          document.getElementById('perf-aside').textContent = s.temp_c + ' \u00b0C';
+          spark.temp.push(tp); if (spark.temp.length > SPARK_N) spark.temp.shift();
+          updateSysCard(s.cpu_pct, s.temp_c);
+        }
+        drawSparkline();
 
-        const q = s.signal_quality, dbm = s.signal_dbm;
-        if (q !== null) {
-          const bars = Math.ceil(q / 25);
-          const cls  = q >= 60 ? 'active' : q >= 35 ? 'active warn' : 'active crit';
-          for (let i = 1; i <= 4; i++) {
-            const el = document.getElementById('sig' + i);
-            el.className = 'signal-bar b' + i + (i <= bars ? ' ' + cls : '');
-          }
-          document.getElementById('signal-dbm').textContent = dbm + ' dBm';
+        if (s.signal_quality != null) {
+          const qualEl = document.getElementById('signal-qual');
+          qualEl.textContent = s.signal_quality + '%';
+          qualEl.className   = 'kv-val ' + (s.signal_quality >= 60 ? 'ok' : s.signal_quality >= 35 ? 'warn' : 'crit');
+          document.getElementById('signal-dbm').textContent = s.signal_dbm + ' dBm';
         }
       });
     }
-    updateStats();
-    setInterval(updateStats, 2000);
+    updateStats(); setInterval(updateStats, 2000);
 
+    // ── SNAPSHOT ──
     function takeSnapshot() {
       const btn = document.getElementById('snap-btn');
-      btn.classList.add('flash');
-      btn.textContent = '✓ CAPTURED';
-      const a = document.createElement('a');
-      a.href = '/snapshot'; a.download = ''; a.click();
-      setTimeout(() => {
-        btn.classList.remove('flash');
-        btn.innerHTML = '&#9654; SNAPSHOT';
-      }, 1200);
+      btn.classList.add('flash'); btn.textContent = '\u2713 CAPTURED';
+      Object.assign(document.createElement('a'), { href: '/snapshot', download: '' }).click();
+      setTimeout(() => { btn.classList.remove('flash'); btn.innerHTML = '&#9654; SNAPSHOT'; }, 1200);
     }
   </script>
 </body>
