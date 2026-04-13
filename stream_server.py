@@ -15,7 +15,6 @@ try:
     from ina219 import INA219, DeviceRangeError
     INA219_AVAILABLE = True
     SHUNT_OHMS = 0.1
-    # 4x 18650 in series: 16.8V full, 12.0V empty
     BATTERY_MAX_V = 16.8
     BATTERY_MIN_V = 12.0
 except ImportError:
@@ -27,24 +26,19 @@ cam = None
 model = None
 cam_lock = threading.Lock()
 
-# Raw frame from camera (RGB) — written by camera thread, read by stream + YOLO
 raw_frame = None
 raw_frame_lock = threading.Lock()
 
-# Last known bounding boxes from YOLO — overlaid on every streamed frame
 last_boxes = []
 boxes_lock = threading.Lock()
 
-# Encoded JPEG served to browsers
 latest_frame = None
 frame_lock = threading.Lock()
 
-# FPS counters
 fps_camera = 0.0
 fps_stream = 0.0
 fps_yolo   = 0.0
 
-# Detection state
 latest_detections = []
 detection_history = deque(maxlen=100)
 detections_lock = threading.Lock()
@@ -74,7 +68,7 @@ def start_camera():
     )
     cam.configure(config)
     cam.start()
-    time.sleep(4)  # allow AWB to fully converge
+    time.sleep(4)
     print("Camera started — 640x480 @ 30fps")
 
 
@@ -86,7 +80,6 @@ def load_model():
 
 
 def draw_boxes(frame, boxes):
-    """Draw pre-computed boxes [(x1,y1,x2,y2,label), ...] onto a BGR frame."""
     for (x1, y1, x2, y2, label) in boxes:
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
@@ -97,7 +90,6 @@ def draw_boxes(frame, boxes):
 
 
 def push_sse(data):
-    """Push a JSON event to all connected SSE clients."""
     msg = f"data: {json.dumps(data)}\n\n"
     with sse_lock:
         dead = []
@@ -111,7 +103,6 @@ def push_sse(data):
 
 
 def camera_loop():
-    """Captures frames from the camera at full speed into raw_frame."""
     global raw_frame, fps_camera
     count, t0 = 0, time.time()
     while True:
@@ -131,11 +122,9 @@ def camera_loop():
 
 
 def detection_loop():
-    """Runs YOLO as fast as CPU allows — only updates boxes, never blocks the stream."""
     global latest_detections, fps_yolo
     last_labels = set()
     count, t0 = 0, time.time()
-
     while True:
         try:
             with raw_frame_lock:
@@ -143,10 +132,7 @@ def detection_loop():
             if frame is None:
                 time.sleep(0.01)
                 continue
-
             results = model.predict(frame, imgsz=320, conf=0.4, verbose=False, device="cpu")
-
-            # Extract boxes as plain tuples for draw_boxes()
             boxes = []
             detections = []
             for result in results:
@@ -159,7 +145,6 @@ def detection_loop():
                         "label": model.names[int(box.cls[0])],
                         "confidence": round(conf, 2),
                     })
-
             with boxes_lock:
                 last_boxes[:] = boxes
             with detections_lock:
@@ -169,7 +154,6 @@ def detection_loop():
             if elapsed >= 2.0:
                 fps_yolo = round(count / elapsed, 1)
                 count, t0 = 0, time.time()
-
             current_labels = {d["label"] for d in detections}
             if current_labels != last_labels:
                 event = {
@@ -180,14 +164,12 @@ def detection_loop():
                     detection_history.appendleft(event)
                 push_sse(event)
                 last_labels = current_labels
-
         except Exception as e:
             print(f"[detection_loop error] {e}", flush=True)
             time.sleep(0.1)
 
 
 def stream_loop():
-    """Encodes camera frames at full speed with latest boxes overlaid."""
     global latest_frame, fps_stream
     count, t0 = 0, time.time()
     while True:
@@ -197,26 +179,22 @@ def stream_loop():
             if frame is None:
                 time.sleep(0.01)
                 continue
-
             bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             with boxes_lock:
                 boxes = list(last_boxes)
             bgr = draw_boxes(bgr, boxes)
-
             _, jpeg = cv2.imencode(
                 ".jpg", bgr,
                 [cv2.IMWRITE_JPEG_QUALITY, 70, cv2.IMWRITE_JPEG_OPTIMIZE, 1]
             )
             with frame_lock:
                 latest_frame = jpeg.tobytes()
-
             count += 1
             elapsed = time.time() - t0
             if elapsed >= 2.0:
                 fps_stream = round(count / elapsed, 1)
                 count, t0 = 0, time.time()
-            time.sleep(0.0417)  # cap at ~24fps
-
+            time.sleep(0.0417)
         except Exception as e:
             print(f"[stream_loop error] {e}", flush=True)
             time.sleep(0.1)
@@ -233,7 +211,7 @@ def generate():
                 b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
             )
             last = frame
-        time.sleep(0.0417)  # match 24fps — never spin faster than stream_loop
+        time.sleep(0.0417)
 
 
 @app.route("/video_feed")
@@ -251,13 +229,12 @@ def detections():
 
 
 def get_system_stats():
-    """Read CPU %, RAM %, and CPU temperature."""
     try:
         import psutil
         cpu = psutil.cpu_percent(interval=0.2)
         ram = psutil.virtual_memory()
-        ram_pct  = ram.percent
-        ram_used = round(ram.used / 1024 / 1024)
+        ram_pct   = ram.percent
+        ram_used  = round(ram.used / 1024 / 1024)
         ram_total = round(ram.total / 1024 / 1024)
     except Exception:
         cpu, ram_pct, ram_used, ram_total = None, None, None, None
@@ -276,7 +253,6 @@ def get_system_stats():
 
 
 def get_signal_strength():
-    """Read WiFi signal from /proc/net/wireless. Returns dBm and quality 0-100."""
     try:
         with open("/proc/net/wireless") as f:
             lines = f.readlines()
@@ -286,8 +262,7 @@ def get_signal_strength():
                 continue
             dbm = float(parts[3].strip("."))
             if dbm > 0:
-                dbm -= 256  # unsigned to signed conversion
-            # Map dBm to 0-100%: -30=100%, -90=0%
+                dbm -= 256
             quality = max(0, min(100, int((dbm + 90) / 60 * 100)))
             return {"dbm": int(dbm), "quality": quality}
     except Exception:
@@ -333,8 +308,6 @@ def power():
         "battery_pct": None,
         "source": "unknown",
     }
-
-    # --- vcgencmd throttle / under-voltage check ---
     try:
         out = subprocess.check_output(["vcgencmd", "get_throttled"], text=True).strip()
         hex_val = int(out.split("=")[1], 16)
@@ -344,8 +317,6 @@ def power():
         result["source"] = "wall"
     except Exception:
         pass
-
-    # --- INA219 battery reading (when hardware is connected) ---
     if INA219_AVAILABLE:
         try:
             ina = INA219(SHUNT_OHMS)
@@ -362,13 +333,11 @@ def power():
             result["source"] = "charging" if (current and current > 50) else "battery"
         except Exception:
             pass
-
     return jsonify(result)
 
 
 @app.route("/events")
 def events():
-    """Server-Sent Events stream — pushes detection changes in real time."""
     client_queue = deque(maxlen=20)
     with sse_lock:
         sse_clients.append(client_queue)
@@ -406,18 +375,20 @@ def index():
       --magenta: #ff003c;
       --orange:  #ff8c00;
       --green:   #00e676;
-      --bg:      #0b0b12;
-      --surface: #0e0e1a;
-      --card:    #121224;
+      --bg:      #080e0a;
+      --surface: #0b1410;
+      --card:    #0e1a12;
       --border:  rgba(255,255,255,0.06);
       --borderb: rgba(255,255,255,0.11);
-      --text:    #e8e8f0;
-      --text2:   #55557a;
-      --dim:     #222238;
+      --text:    #ddeee4;
+      --text2:   #4a6655;
+      --dim:     #1a2e20;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: var(--bg); color: var(--text);
+      background: var(--bg);
+      background-image: radial-gradient(ellipse at 35% 25%, rgba(0,60,20,0.18) 0%, transparent 65%);
+      color: var(--text);
       font-family: 'Inter', sans-serif;
       height: 100vh; display: flex; overflow: hidden;
     }
@@ -444,7 +415,7 @@ def index():
     }
     .nav-brand-sub {
       font-family: 'Share Tech Mono', monospace;
-      font-size: 0.46rem; color: var(--text2); letter-spacing: 1px;
+      font-size: 0.44rem; color: var(--text2); letter-spacing: 1px;
       display: block; margin-top: 4px;
     }
     .nav-section { padding: 8px 6px; flex: 1; display: flex; flex-direction: column; gap: 1px; }
@@ -458,7 +429,7 @@ def index():
       padding: 7px 9px; border-radius: 5px;
       cursor: pointer; transition: all 0.15s; user-select: none;
     }
-    .nav-item:hover { background: rgba(255,255,255,0.04); }
+    .nav-item:hover { background: rgba(0,230,118,0.05); }
     .nav-item.active { background: rgba(245,197,24,0.09); }
     .nav-icon { font-size: 0.8rem; width: 15px; text-align: center; flex-shrink: 0; color: var(--text2); }
     .nav-text {
@@ -469,7 +440,6 @@ def index():
     .nav-item.active .nav-text { color: var(--yellow); }
     .nav-item:hover .nav-icon,
     .nav-item:hover .nav-text { color: var(--text); }
-    .nav-spacer { flex: 1; }
     .nav-bottom {
       padding: 8px 6px; border-top: 1px solid var(--border);
       display: flex; flex-direction: column; gap: 1px;
@@ -539,7 +509,7 @@ def index():
     /* ── SHORTCUTS OVERLAY ── */
     .shortcuts-overlay {
       display: none; position: fixed; inset: 0;
-      background: rgba(0,0,0,0.85); z-index: 10000;
+      background: rgba(0,0,0,0.88); z-index: 10000;
       align-items: center; justify-content: center;
     }
     .shortcuts-overlay.show { display: flex; }
@@ -566,50 +536,60 @@ def index():
     /* ── CONTENT ── */
     .content { flex: 1; display: flex; overflow: hidden; min-height: 0; }
 
-    /* ── LEFT PANEL ── */
+    /* ══════════════════════════════════════
+       LEFT PANEL  (fixed ~42% width)
+    ══════════════════════════════════════ */
     .left-panel {
-      flex: 1; min-width: 0; display: flex; flex-direction: column;
+      flex: 0 0 42%; min-width: 320px; max-width: 560px;
+      display: flex; flex-direction: column;
       padding: 12px; gap: 9px; overflow: hidden;
     }
 
-    /* AgentOS-style total counter row */
-    .total-row {
-      display: flex; align-items: flex-end; gap: 0; flex-shrink: 0;
-      background: var(--card); border: 1px solid var(--border);
-      border-radius: 8px; padding: 10px 14px;
+    /* ─ Total Detected card (AgentOS "Total Agent Tasks" style) ─ */
+    .total-card {
+      flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 14px;
+      display: flex; gap: 12px; align-items: flex-start;
+      position: relative; overflow: hidden;
     }
-    .total-block { display: flex; flex-direction: column; gap: 1px; }
-    .total-label {
-      font-family: 'Share Tech Mono', monospace;
-      font-size: 0.5rem; color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
+    .total-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, var(--yellow) 0%, transparent 100%);
+    }
+    .total-left { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+    .total-eyebrow {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.5rem;
+      color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
     }
     .total-number {
-      font-family: 'Rajdhani', sans-serif; font-size: 2.2rem; font-weight: 700;
+      font-family: 'Rajdhani', sans-serif; font-size: 2.4rem; font-weight: 700;
       color: var(--text); line-height: 1; letter-spacing: -1px;
     }
     .total-delta {
-      font-family: 'Share Tech Mono', monospace; font-size: 0.5rem;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.48rem;
       color: var(--green); letter-spacing: 1px;
     }
-    .total-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .total-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
     .hero-badge {
       display: inline-flex; align-items: center; gap: 5px;
       border-radius: 20px; padding: 3px 10px;
-      font-family: 'Share Tech Mono', monospace; font-size: 0.56rem; letter-spacing: 1px;
-      background: rgba(0,230,118,0.07); border: 1px solid rgba(0,230,118,0.22); color: var(--green);
+      font-family: 'Share Tech Mono', monospace; font-size: 0.55rem; letter-spacing: 1px;
+      background: rgba(0,230,118,0.07); border: 1px solid rgba(0,230,118,0.2); color: var(--green);
     }
-    .hero-badge.warn { background: rgba(255,140,0,0.07); border-color: rgba(255,140,0,0.22); color: var(--orange); }
-    .hero-badge.crit { background: rgba(255,0,60,0.07); border-color: rgba(255,0,60,0.22); color: var(--magenta); animation: blink 1s step-start infinite; }
+    .hero-badge.warn { background: rgba(255,140,0,0.07); border-color: rgba(255,140,0,0.2); color: var(--orange); }
+    .hero-badge.crit { background: rgba(255,0,60,0.07); border-color: rgba(255,0,60,0.2); color: var(--magenta); animation: blink 1s step-start infinite; }
+    #det-bar-canvas { width: 100%; display: block; }
     .frame-count {
-      font-family: 'Share Tech Mono', monospace; font-size: 0.52rem; color: var(--text2);
+      font-family: 'Share Tech Mono', monospace; font-size: 0.5rem; color: var(--text2);
+      text-align: right;
     }
-    .frame-count span { color: var(--cyan); font-size: 0.9rem; font-family: 'Rajdhani', sans-serif; font-weight: 600; }
+    .frame-count span { color: var(--cyan); font-family: 'Rajdhani', sans-serif; font-size: 1rem; font-weight: 600; }
 
-    /* video */
+    /* ─ Video ─ */
     .video-wrap {
       flex: 1; min-height: 0; position: relative;
       display: flex; align-items: center; justify-content: center;
-      background: #050508; border: 1px solid var(--border);
+      background: #030806; border: 1px solid var(--border);
       border-radius: 8px; overflow: hidden; cursor: pointer;
     }
     .video-wrap img {
@@ -640,7 +620,7 @@ def index():
     }
     .video-wrap:fullscreen img, .video-wrap:-webkit-full-screen img { max-width:100%; max-height:100%; }
 
-    /* stat strip */
+    /* ─ Stat strip ─ */
     .stat-strip {
       display: flex; flex-shrink: 0;
       border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
@@ -651,48 +631,46 @@ def index():
       border-right: 1px solid var(--border);
     }
     .strip-stat:last-child { border-right: none; }
-    .strip-label { font-family: 'Share Tech Mono', monospace; font-size: 0.48rem; color: var(--text2); letter-spacing: 1px; text-transform: uppercase; }
-    .strip-value { font-family: 'Rajdhani', sans-serif; font-size: 0.95rem; font-weight: 600; color: var(--text); }
+    .strip-label { font-family: 'Share Tech Mono', monospace; font-size: 0.46rem; color: var(--text2); letter-spacing: 1px; text-transform: uppercase; }
+    .strip-value { font-family: 'Rajdhani', sans-serif; font-size: 0.92rem; font-weight: 600; color: var(--text); }
     .strip-value.ok   { color: var(--cyan); }
     .strip-value.warn { color: var(--orange); }
     .strip-value.crit { color: var(--magenta); }
 
-    /* ── RIGHT COLUMN ── */
+    /* ══════════════════════════════════════
+       RIGHT COLUMN  (flex:1)
+    ══════════════════════════════════════ */
     .right-col {
-      width: 370px; flex-shrink: 0;
+      flex: 1; min-width: 0;
       display: flex; flex-direction: column;
       padding: 12px 12px 12px 0; gap: 9px; overflow: hidden;
     }
 
-    /* ── GAUGE ROW — 3 circular gauges (AgentOS style) ── */
+    /* ─ Gauge Row — 3 speedometer arc gauges (AgentOS style) ─ */
     .gauge-row { display: flex; gap: 8px; flex-shrink: 0; }
     .gauge-card {
       flex: 1; background: var(--card); border: 1px solid var(--border);
-      border-radius: 10px; padding: 11px 8px 9px;
-      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      border-radius: 10px; padding: 10px 8px 8px;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
       position: relative; overflow: hidden; min-width: 0;
     }
     .gauge-card::before {
       content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
     }
-    .gauge-card.g-cpu::before  { background: linear-gradient(90deg, var(--yellow) 0%, transparent 100%); }
-    .gauge-card.g-ram::before  { background: linear-gradient(90deg, var(--cyan) 0%, transparent 100%); }
+    .gauge-card.g-cpu::before  { background: linear-gradient(90deg, var(--yellow)  0%, transparent 100%); }
+    .gauge-card.g-ram::before  { background: linear-gradient(90deg, var(--cyan)    0%, transparent 100%); }
     .gauge-card.g-temp::before { background: linear-gradient(90deg, var(--magenta) 0%, transparent 100%); }
+    /* subtle inner glow matching each gauge */
+    .gauge-card.g-cpu  { box-shadow: inset 0 -1px 20px rgba(245,197,24,0.04); }
+    .gauge-card.g-ram  { box-shadow: inset 0 -1px 20px rgba(0,212,255,0.04); }
+    .gauge-card.g-temp { box-shadow: inset 0 -1px 20px rgba(255,0,60,0.04); }
     .gauge-eyebrow {
-      font-family: 'Share Tech Mono', monospace; font-size: 0.48rem;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.46rem;
       color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
     }
-    .gauge-svg { width: 68px; height: 68px; }
-    .gauge-val {
-      font-family: 'Rajdhani', sans-serif; font-size: 1.05rem; font-weight: 700;
-      line-height: 1; color: var(--text); text-align: center;
-    }
-    .gauge-sub {
-      font-family: 'Share Tech Mono', monospace; font-size: 0.44rem;
-      color: var(--text2); letter-spacing: 1px; text-align: center;
-    }
+    .gauge-svg { width: 100%; max-width: 110px; display: block; }
 
-    /* ── TWO CARDS ROW ── */
+    /* ─ Cards Row ─ */
     .cards-row { display: flex; gap: 8px; flex-shrink: 0; }
     .card {
       flex: 1; background: var(--card); border: 1px solid var(--border);
@@ -706,11 +684,11 @@ def index():
     .card-scan::before { background: linear-gradient(90deg, var(--cyan) 0%, transparent 100%); }
     .card-sys::before  { background: linear-gradient(90deg, var(--yellow) 0%, transparent 100%); }
     .card-eyebrow {
-      font-family: 'Share Tech Mono', monospace; font-size: 0.52rem;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.5rem;
       color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
     }
     .card-title {
-      font-family: 'Rajdhani', sans-serif; font-size: 0.92rem; font-weight: 600;
+      font-family: 'Rajdhani', sans-serif; font-size: 0.9rem; font-weight: 600;
       color: var(--text); line-height: 1.1;
     }
     .card-badge {
@@ -732,33 +710,27 @@ def index():
     }
     .card-scan .card-action:hover { color: var(--cyan);   border-color: var(--cyan); }
     .card-sys  .card-action:hover { color: var(--yellow); border-color: var(--yellow); }
-
-    /* detection tags */
     .tag {
       display: inline-block; margin: 2px 2px 2px 0; padding: 1px 6px;
-      font-family: 'Share Tech Mono', monospace; font-size: 0.53rem; border-radius: 3px;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.52rem; border-radius: 3px;
     }
     .tag-person { background: rgba(255,0,60,0.1); color: #ff6688; border: 1px solid rgba(255,0,60,0.25); }
     .tag-object { background: rgba(0,212,255,0.07); color: var(--cyan); border: 1px solid rgba(0,212,255,0.2); }
-    .no-detect  { font-family: 'Share Tech Mono', monospace; font-size: 0.56rem; color: var(--text2); }
-
-    /* sys card kv rows */
+    .no-detect  { font-family: 'Share Tech Mono', monospace; font-size: 0.55rem; color: var(--text2); }
     .kv-row {
       display: flex; justify-content: space-between; align-items: center;
       padding: 4px 0; border-bottom: 1px solid var(--border);
     }
     .kv-row:last-child { border-bottom: none; }
-    .kv-label { font-family: 'Share Tech Mono', monospace; font-size: 0.48rem; color: var(--text2); letter-spacing: 1px; }
+    .kv-label { font-family: 'Share Tech Mono', monospace; font-size: 0.46rem; color: var(--text2); letter-spacing: 1px; }
     .kv-val   { font-family: 'Rajdhani', sans-serif; font-size: 0.82rem; font-weight: 600; color: var(--text); }
     .kv-val.ok   { color: var(--cyan); }
     .kv-val.warn { color: var(--orange); }
     .kv-val.crit { color: var(--magenta); }
-
-    /* battery bar */
     .batt-wrap { height: 3px; background: var(--dim); border-radius: 2px; overflow: hidden; margin-top: 3px; }
     .batt-bar  { height: 100%; border-radius: 2px; transition: width 0.5s, background 0.5s; }
 
-    /* ── BOTTOM CARD ── */
+    /* ─ Bottom card — Activity Distribution + sparkline + event log ─ */
     .bottom-card {
       flex: 1; min-height: 0; background: var(--card);
       border: 1px solid var(--border); border-radius: 10px;
@@ -766,53 +738,69 @@ def index():
     }
     .bc-header { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .bc-title {
-      font-family: 'Share Tech Mono', monospace; font-size: 0.52rem;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.5rem;
       color: var(--text2); letter-spacing: 2px; text-transform: uppercase;
     }
+    .bc-meta { font-family: 'Share Tech Mono', monospace; font-size: 0.46rem; color: var(--text2); }
     .bc-actions { margin-left: auto; display: flex; gap: 4px; }
     .mini-btn {
       background: none; border: 1px solid var(--border);
       color: var(--text2); font-family: 'Share Tech Mono', monospace;
-      font-size: 0.48rem; letter-spacing: 1px; cursor: pointer;
+      font-size: 0.46rem; letter-spacing: 1px; cursor: pointer;
       padding: 2px 7px; text-transform: uppercase; border-radius: 3px; transition: all 0.15s;
     }
     .mini-btn:hover { color: var(--cyan); border-color: var(--cyan); }
 
-    /* AgentOS-style primary metric */
+    /* AgentOS primary metric */
     .perf-row { display: flex; align-items: baseline; gap: 7px; flex-shrink: 0; }
     .perf-big { font-family: 'Rajdhani', sans-serif; font-size: 1.8rem; font-weight: 700; color: var(--text); line-height: 1; }
-    .perf-unit { font-family: 'Share Tech Mono', monospace; font-size: 0.56rem; color: var(--text2); }
+    .perf-unit { font-family: 'Share Tech Mono', monospace; font-size: 0.54rem; color: var(--text2); }
     .perf-badge {
-      font-family: 'Share Tech Mono', monospace; font-size: 0.48rem; letter-spacing: 1px;
+      font-family: 'Share Tech Mono', monospace; font-size: 0.46rem; letter-spacing: 1px;
       padding: 1px 6px; border-radius: 3px; margin-left: 3px;
     }
     .perf-badge.ok   { background: rgba(0,230,118,0.07); color: var(--green); border: 1px solid rgba(0,230,118,0.18); }
     .perf-badge.warn { background: rgba(255,140,0,0.07); color: var(--orange); border: 1px solid rgba(255,140,0,0.18); }
     .perf-badge.crit { background: rgba(255,0,60,0.07);  color: var(--magenta); border: 1px solid rgba(255,0,60,0.18); }
-    .perf-aside { margin-left: auto; font-family: 'Share Tech Mono', monospace; font-size: 0.52rem; color: var(--text2); }
+    .perf-aside { margin-left: auto; font-family: 'Share Tech Mono', monospace; font-size: 0.5rem; color: var(--text2); }
 
-    /* filled sparkline */
     #spark-canvas { width: 100%; flex-shrink: 0; display: block; }
 
-    /* dot grid — detection activity distribution */
-    .dot-grid {
-      display: grid; grid-template-columns: repeat(40, 1fr);
-      gap: 2px; flex-shrink: 0; padding: 2px 0;
+    /* Activity Distribution grid — 20 cols × 3 rows, like AgentOS colored squares */
+    .activity-grid {
+      display: grid;
+      grid-template-columns: repeat(20, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      gap: 3px; flex-shrink: 0;
     }
-    .dot-cell {
+    .ag-cell {
       aspect-ratio: 1; border-radius: 2px;
-      background: var(--dim); transition: background 0.4s;
+      background: var(--dim); transition: background 0.35s;
     }
-    .dot-cell.hot  { background: var(--yellow); }
-    .dot-cell.warm { background: var(--orange); opacity: 0.75; }
-    .dot-cell.cool { background: var(--cyan); opacity: 0.45; }
+    /* row 0: detection (person=yellow, object=cyan) */
+    .ag-cell.r0-person { background: var(--yellow); }
+    .ag-cell.r0-object { background: var(--cyan); opacity: 0.75; }
+    /* row 1: cpu activity */
+    .ag-cell.r1-hot  { background: var(--orange); }
+    .ag-cell.r1-warm { background: var(--orange); opacity: 0.45; }
+    /* row 2: temp activity */
+    .ag-cell.r2-hot  { background: var(--magenta); }
+    .ag-cell.r2-warm { background: var(--magenta); opacity: 0.4; }
+    /* row legends */
+    .ag-legend {
+      display: flex; gap: 10px; flex-shrink: 0;
+    }
+    .ag-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 1px; margin-right: 3px;
+      vertical-align: middle;
+    }
+    .ag-legend-item { font-family: 'Share Tech Mono', monospace; font-size: 0.44rem; color: var(--text2); }
 
-    /* event log */
     #event-log { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
     .ev-item { padding: 4px 0; border-bottom: 1px solid var(--border); animation: fadeIn 0.2s ease; }
     @keyframes fadeIn { from { opacity:0; transform:translateY(-2px); } to { opacity:1; } }
-    .ev-time { font-family: 'Share Tech Mono', monospace; font-size: 0.5rem; color: var(--text2); margin-bottom: 2px; }
-    .ev-empty { font-family: 'Share Tech Mono', monospace; font-size: 0.55rem; color: var(--dim); font-style: italic; }
+    .ev-time { font-family: 'Share Tech Mono', monospace; font-size: 0.48rem; color: var(--text2); margin-bottom: 2px; }
+    .ev-empty { font-family: 'Share Tech Mono', monospace; font-size: 0.54rem; color: var(--dim); font-style: italic; }
 
     @keyframes blink { 50% { opacity: 0; } }
   </style>
@@ -838,7 +826,7 @@ def index():
   <nav class="leftnav">
     <div class="nav-brand">
       <span class="nav-brand-title">// TONY</span>
-      <span class="nav-brand-sub">NEURAL SURVEILLANCE v3.1</span>
+      <span class="nav-brand-sub">NEURAL SURVEILLANCE v3.2</span>
     </div>
     <div class="nav-section">
       <span class="nav-group-label">Monitor</span>
@@ -897,23 +885,24 @@ def index():
     <!-- CONTENT -->
     <div class="content">
 
-      <!-- ── LEFT: VIDEO HERO ── -->
+      <!-- ══ LEFT PANEL ══ -->
       <div class="left-panel">
 
-        <!-- AgentOS total counter -->
-        <div class="total-row">
-          <div class="total-block">
-            <span class="total-label">Total Objects Detected</span>
+        <!-- Total Detected — AgentOS "Total Agent Tasks Processed" style -->
+        <div class="total-card">
+          <div class="total-left">
+            <span class="total-eyebrow">Total Objects Detected</span>
             <span class="total-number" id="total-detections">0</span>
             <span class="total-delta" id="total-delta">&#9650; session active</span>
           </div>
           <div class="total-right">
             <span class="hero-badge" id="hero-badge">&#9679; SCANNING</span>
-            <span class="frame-count">IN FRAME&nbsp;&nbsp;<span id="frame-count-num">0</span></span>
+            <canvas id="det-bar-canvas" height="38"></canvas>
+            <span class="frame-count">IN FRAME &nbsp;<span id="frame-count-num">0</span></span>
           </div>
         </div>
 
-        <!-- live video -->
+        <!-- Live video -->
         <div class="video-wrap" id="video-wrap" onclick="toggleFullscreen()">
           <div class="corner tl"></div><div class="corner tr"></div>
           <div class="corner bl"></div><div class="corner br"></div>
@@ -921,7 +910,7 @@ def index():
           <div class="pause-label">&#9646;&#9646; PAUSED</div>
         </div>
 
-        <!-- stat strip -->
+        <!-- Stat strip -->
         <div class="stat-strip">
           <div class="strip-stat">
             <span class="strip-label">Cam FPS</span>
@@ -946,50 +935,66 @@ def index():
         </div>
       </div>
 
-      <!-- ── RIGHT COLUMN ── -->
+      <!-- ══ RIGHT COLUMN ══ -->
       <div class="right-col">
 
-        <!-- GAUGE ROW: CPU / RAM / TEMP -->
+        <!-- GAUGE ROW — speedometer arc gauges (AgentOS "Agent Idle / Active / Verification") -->
         <div class="gauge-row">
-          <div class="gauge-card g-cpu">
-            <span class="gauge-eyebrow">CPU</span>
-            <svg class="gauge-svg" viewBox="0 0 68 68">
-              <circle cx="34" cy="34" r="27" fill="none" stroke="var(--dim)" stroke-width="5"/>
-              <circle id="gauge-cpu-arc" cx="34" cy="34" r="27" fill="none" stroke="var(--yellow)" stroke-width="5"
-                stroke-linecap="round" stroke-dasharray="0 169.6"
-                transform="rotate(-90 34 34)" style="transition:stroke-dasharray 0.6s ease;"/>
-            </svg>
-            <span class="gauge-val" id="gauge-cpu-val">--%</span>
-            <span class="gauge-sub" id="gauge-cpu-sub">PROCESSOR</span>
-          </div>
-          <div class="gauge-card g-ram">
-            <span class="gauge-eyebrow">RAM</span>
-            <svg class="gauge-svg" viewBox="0 0 68 68">
-              <circle cx="34" cy="34" r="27" fill="none" stroke="var(--dim)" stroke-width="5"/>
-              <circle id="gauge-ram-arc" cx="34" cy="34" r="27" fill="none" stroke="var(--cyan)" stroke-width="5"
-                stroke-linecap="round" stroke-dasharray="0 169.6"
-                transform="rotate(-90 34 34)" style="transition:stroke-dasharray 0.6s ease;"/>
-            </svg>
-            <span class="gauge-val" id="gauge-ram-val">--%</span>
-            <span class="gauge-sub" id="gauge-ram-sub">MEMORY</span>
-          </div>
-          <div class="gauge-card g-temp">
-            <span class="gauge-eyebrow">TEMP</span>
-            <svg class="gauge-svg" viewBox="0 0 68 68">
-              <circle cx="34" cy="34" r="27" fill="none" stroke="var(--dim)" stroke-width="5"/>
-              <circle id="gauge-temp-arc" cx="34" cy="34" r="27" fill="none" stroke="var(--magenta)" stroke-width="5"
-                stroke-linecap="round" stroke-dasharray="0 169.6"
-                transform="rotate(-90 34 34)" style="transition:stroke-dasharray 0.6s ease;"/>
-            </svg>
-            <span class="gauge-val" id="gauge-temp-val">-- &deg;C</span>
-            <span class="gauge-sub">THERMAL</span>
-          </div>
-        </div>
 
-        <!-- TWO CARDS: Neural Scan + System -->
+          <!-- CPU gauge -->
+          <div class="gauge-card g-cpu">
+            <span class="gauge-eyebrow">CPU Load</span>
+            <svg class="gauge-svg" viewBox="0 0 100 72">
+              <!-- 300° arc: start (7 o'clock) M 18,64  end (5 o'clock) 82,64  radius 40 center 50,46 -->
+              <path d="M 18,64 A 40,40 0 1 1 82,64"
+                fill="none" stroke="var(--dim)" stroke-width="6" stroke-linecap="round"/>
+              <path id="gauge-cpu-arc" d="M 18,64 A 40,40 0 1 1 82,64"
+                fill="none" stroke="var(--yellow)" stroke-width="6" stroke-linecap="round"
+                stroke-dasharray="0 209.4" style="transition:stroke-dasharray 0.6s ease;"/>
+              <text id="gauge-cpu-val" x="50" y="50" text-anchor="middle"
+                font-family="Rajdhani, sans-serif" font-size="17" font-weight="700" fill="#ddeee4">--%</text>
+              <text id="gauge-cpu-sub" x="50" y="63" text-anchor="middle"
+                font-family="Share Tech Mono, monospace" font-size="5.5" fill="#4a6655">PROCESSOR</text>
+            </svg>
+          </div>
+
+          <!-- RAM gauge -->
+          <div class="gauge-card g-ram">
+            <span class="gauge-eyebrow">RAM Usage</span>
+            <svg class="gauge-svg" viewBox="0 0 100 72">
+              <path d="M 18,64 A 40,40 0 1 1 82,64"
+                fill="none" stroke="var(--dim)" stroke-width="6" stroke-linecap="round"/>
+              <path id="gauge-ram-arc" d="M 18,64 A 40,40 0 1 1 82,64"
+                fill="none" stroke="var(--cyan)" stroke-width="6" stroke-linecap="round"
+                stroke-dasharray="0 209.4" style="transition:stroke-dasharray 0.6s ease;"/>
+              <text id="gauge-ram-val" x="50" y="50" text-anchor="middle"
+                font-family="Rajdhani, sans-serif" font-size="17" font-weight="700" fill="#ddeee4">--%</text>
+              <text id="gauge-ram-sub" x="50" y="63" text-anchor="middle"
+                font-family="Share Tech Mono, monospace" font-size="5.5" fill="#4a6655">MEMORY</text>
+            </svg>
+          </div>
+
+          <!-- TEMP gauge -->
+          <div class="gauge-card g-temp">
+            <span class="gauge-eyebrow">CPU Temp</span>
+            <svg class="gauge-svg" viewBox="0 0 100 72">
+              <path d="M 18,64 A 40,40 0 1 1 82,64"
+                fill="none" stroke="var(--dim)" stroke-width="6" stroke-linecap="round"/>
+              <path id="gauge-temp-arc" d="M 18,64 A 40,40 0 1 1 82,64"
+                fill="none" stroke="var(--magenta)" stroke-width="6" stroke-linecap="round"
+                stroke-dasharray="0 209.4" style="transition:stroke-dasharray 0.6s ease;"/>
+              <text id="gauge-temp-val" x="50" y="50" text-anchor="middle"
+                font-family="Rajdhani, sans-serif" font-size="17" font-weight="700" fill="#ddeee4">--&deg;</text>
+              <text x="50" y="63" text-anchor="middle"
+                font-family="Share Tech Mono, monospace" font-size="5.5" fill="#4a6655">THERMAL</text>
+            </svg>
+          </div>
+
+        </div><!-- /gauge-row -->
+
+        <!-- CARDS ROW: Neural Scan + System Status -->
         <div class="cards-row">
 
-          <!-- NEURAL SCAN -->
           <div class="card card-scan">
             <span class="card-eyebrow">&#8853; Neural Scan</span>
             <span class="card-title">Object Detection</span>
@@ -997,11 +1002,10 @@ def index():
             <div class="card-body" id="scan-tags">
               <span class="no-detect">Awaiting objects...</span>
             </div>
-            <div style="font-family:'Share Tech Mono',monospace;font-size:0.48rem;color:var(--text2);" id="scan-time">&mdash;</div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:0.46rem;color:var(--text2);" id="scan-time">&mdash;</div>
             <button class="card-action" onclick="clearLog()">Clear Log &rarr;</button>
           </div>
 
-          <!-- SYSTEM STATUS -->
           <div class="card card-sys">
             <span class="card-eyebrow">&#8779; System</span>
             <span class="card-title">Health Status</span>
@@ -1013,7 +1017,7 @@ def index():
               </div>
               <div class="kv-row">
                 <span class="kv-label">Signal</span>
-                <span class="kv-val" style="font-family:'Share Tech Mono',monospace;font-size:0.52rem;" id="signal-dbm">-- dBm</span>
+                <span class="kv-val" style="font-family:'Share Tech Mono',monospace;font-size:0.5rem;" id="signal-dbm">-- dBm</span>
               </div>
               <div class="kv-row">
                 <span class="kv-label">Power</span>
@@ -1029,12 +1033,14 @@ def index():
             </div>
             <button class="card-action" onclick="toggleShortcuts()">Diagnostics &rarr;</button>
           </div>
-        </div>
 
-        <!-- BOTTOM: activity + sparkline + dot grid + log -->
+        </div><!-- /cards-row -->
+
+        <!-- BOTTOM CARD: Activity Distribution + sparkline + event log -->
         <div class="bottom-card">
           <div class="bc-header">
-            <span class="bc-title">Activity Feed</span>
+            <span class="bc-title">Activity Distribution</span>
+            <span class="bc-meta" id="bc-meta">Active Coverage</span>
             <div class="bc-actions">
               <button class="mini-btn" onclick="exportLog()">&#8615; Export</button>
               <button class="mini-btn" onclick="clearLog()">&#10005; Clear</button>
@@ -1048,9 +1054,16 @@ def index():
             <span class="perf-aside" id="perf-aside">-- &deg;C</span>
           </div>
 
-          <canvas id="spark-canvas" height="38"></canvas>
+          <canvas id="spark-canvas" height="36"></canvas>
 
-          <div class="dot-grid" id="dot-grid"></div>
+          <!-- Multi-row activity grid (like AgentOS colored squares) -->
+          <div class="activity-grid" id="activity-grid"></div>
+          <div class="ag-legend">
+            <span class="ag-legend-item"><span class="ag-dot" style="background:var(--yellow)"></span>Person</span>
+            <span class="ag-legend-item"><span class="ag-dot" style="background:var(--cyan)"></span>Object</span>
+            <span class="ag-legend-item"><span class="ag-dot" style="background:var(--orange)"></span>CPU hi</span>
+            <span class="ag-legend-item"><span class="ag-dot" style="background:var(--magenta)"></span>Temp hi</span>
+          </div>
 
           <div id="event-log"></div>
         </div>
@@ -1073,19 +1086,39 @@ def index():
     let streamPaused  = false;
     let audioCtx      = null;
     const startTime   = Date.now();
-    const SPARK_N     = 45;
-    const spark       = { cpu: [], ram: [], temp: [] };
-    const CIRC        = 2 * Math.PI * 27; // ~169.6
 
-    // dot grid — 40 slots of rolling detection counts
-    const DOT_N      = 40;
-    const dotHistory = new Array(DOT_N).fill(0);
-    const dotGrid    = document.getElementById('dot-grid');
-    for (let i = 0; i < DOT_N; i++) {
-      const d = document.createElement('div');
-      d.className = 'dot-cell';
-      dotGrid.appendChild(d);
+    // Sparkline
+    const SPARK_N = 45;
+    const spark   = { cpu: [], ram: [], temp: [] };
+
+    // Gauge arc: M 18,64 A 40,40 0 1 1 82,64  radius=40, 300° arc
+    // Arc length = 2*PI*40*(300/360) = 209.4
+    const GAUGE_CIRC = 209.4;
+
+    // Detection bar chart: 20 buckets, one per 4 seconds
+    const BAR_N       = 20;
+    const barData     = new Array(BAR_N).fill(0);
+    const barPersonData = new Array(BAR_N).fill(0);
+    let barLastTime   = Date.now();
+
+    // Activity distribution grid: 20 columns × 3 rows
+    const AG_COLS = 20;
+    const AG_ROWS = 3; // row0=detection, row1=cpu, row2=temp
+    // Each column is one time slot (4 seconds)
+    // Values: row0: 0=clear,1=object,2=person | row1: 0=ok,1=warm,2=hot | row2: 0=ok,1=warm,2=hot
+    const agData = Array.from({length: AG_ROWS}, () => new Array(AG_COLS).fill(0));
+    const agGrid = document.getElementById('activity-grid');
+    // Build 60 cells: cols change fastest (left→right), rows after
+    for (let r = 0; r < AG_ROWS; r++) {
+      for (let c = 0; c < AG_COLS; c++) {
+        const d = document.createElement('div');
+        d.className = 'ag-cell';
+        agGrid.appendChild(d);
+      }
     }
+
+    let lastCpu  = 0;
+    let lastTemp = 0;
 
     // ── UPTIME ──
     setInterval(() => {
@@ -1164,12 +1197,101 @@ def index():
       }
     });
 
-    // ── SVG GAUGES ──
+    // ── SPEEDOMETER GAUGES ──
     function setGauge(arcId, pct) {
       const arc  = document.getElementById(arcId);
-      const dash = (pct / 100) * CIRC;
-      arc.setAttribute('stroke-dasharray', dash + ' ' + CIRC);
+      const dash = Math.min(1, pct / 100) * GAUGE_CIRC;
+      arc.setAttribute('stroke-dasharray', dash.toFixed(1) + ' ' + GAUGE_CIRC);
     }
+
+    // ── DETECTION BAR CHART (canvas, AgentOS style column chart) ──
+    const barCanvas = document.getElementById('det-bar-canvas');
+    const barCtx    = barCanvas.getContext('2d');
+
+    function drawBarChart() {
+      const W = barCanvas.offsetWidth, H = 38;
+      barCanvas.width = W; barCanvas.height = H;
+      barCtx.clearRect(0, 0, W, H);
+      const maxVal = Math.max(1, ...barData);
+      const barW   = (W / BAR_N) - 2;
+      for (let i = 0; i < BAR_N; i++) {
+        const x   = i * (W / BAR_N) + 1;
+        const h   = (barData[i] / maxVal) * (H - 4);
+        const y   = H - h - 2;
+        const isP = barPersonData[i] > 0;
+        barCtx.fillStyle = i === BAR_N - 1 ? 'rgba(245,197,24,0.9)'
+          : isP ? 'rgba(255,0,60,0.55)' : 'rgba(0,212,255,0.35)';
+        if (h > 0) {
+          barCtx.beginPath();
+          barCtx.roundRect ? barCtx.roundRect(x, y, barW, h, 1) : barCtx.rect(x, y, barW, h);
+          barCtx.fill();
+        } else {
+          barCtx.fillStyle = 'rgba(255,255,255,0.06)';
+          barCtx.fillRect(x, H - 3, barW, 2);
+        }
+      }
+    }
+
+    function tickBarBucket(ev) {
+      const now = Date.now();
+      if (now - barLastTime > 4000) {
+        barData.push(0);
+        barPersonData.push(0);
+        if (barData.length > BAR_N) { barData.shift(); barPersonData.shift(); }
+        barLastTime = now;
+      }
+      if (ev.objects.length > 0) {
+        barData[barData.length - 1] += ev.objects.length;
+        if (ev.objects.some(o => o.label === 'person'))
+          barPersonData[barData.length - 1]++;
+      }
+      drawBarChart();
+    }
+
+    // ── ACTIVITY GRID ──
+    function tickActivityGrid(ev, cpu, temp) {
+      // Advance column on each detection event (or on stats update)
+    }
+
+    function pushActivityCol(detVal, cpuVal, tempVal) {
+      // Shift all columns left
+      for (let r = 0; r < AG_ROWS; r++) {
+        agData[r].push(r === 0 ? detVal : r === 1 ? cpuVal : tempVal);
+        if (agData[r].length > AG_COLS) agData[r].shift();
+      }
+      // Redraw
+      const cells = agGrid.children;
+      for (let r = 0; r < AG_ROWS; r++) {
+        for (let c = 0; c < AG_COLS; c++) {
+          const cell = cells[r * AG_COLS + c];
+          const v    = agData[r][c] || 0;
+          let cls    = 'ag-cell';
+          if (r === 0) {
+            if (v === 2) cls += ' r0-person';
+            else if (v === 1) cls += ' r0-object';
+          } else if (r === 1) {
+            if (v === 2) cls += ' r1-hot';
+            else if (v === 1) cls += ' r1-warm';
+          } else {
+            if (v === 2) cls += ' r2-hot';
+            else if (v === 1) cls += ' r2-warm';
+          }
+          cell.className = cls;
+        }
+      }
+      // Update meta
+      const hot = agData[0].filter(v => v > 0).length;
+      const pct = Math.round((hot / AG_COLS) * 100);
+      document.getElementById('bc-meta').textContent = 'Active Coverage: ' + pct + '%';
+    }
+
+    // push activity column every 4 seconds even without events
+    setInterval(() => {
+      const detVal  = 0;  // idle tick
+      const cpuVal  = lastCpu  >= 90 ? 2 : lastCpu  >= 70 ? 1 : 0;
+      const tempVal = lastTemp >= 80 ? 2 : lastTemp >= 70 ? 1 : 0;
+      pushActivityCol(detVal, cpuVal, tempVal);
+    }, 4000);
 
     // ── HERO + SCAN CARD ──
     function updateHero(objects) {
@@ -1203,20 +1325,7 @@ def index():
       }
     }
 
-    // ── DOT GRID ──
-    function updateDotGrid(objCount) {
-      dotHistory.push(objCount);
-      if (dotHistory.length > DOT_N) dotHistory.shift();
-      const cells  = dotGrid.children;
-      const maxVal = Math.max(1, ...dotHistory);
-      for (let i = 0; i < DOT_N; i++) {
-        const v = dotHistory[i] || 0;
-        const r = v / maxVal;
-        cells[i].className = 'dot-cell' + (r > 0.6 ? ' hot' : r > 0.2 ? ' warm' : r > 0 ? ' cool' : '');
-      }
-    }
-
-    // ── EVENT HANDLING ──
+    // ── EVENTS ──
     function tagHTML(obj) {
       return '<span class="tag ' + (obj.label === 'person' ? 'tag-person' : 'tag-object') + '">' +
              obj.label + ' ' + Math.round(obj.confidence * 100) + '%</span>';
@@ -1235,15 +1344,22 @@ def index():
         totalDetected += ev.objects.length;
         document.getElementById('total-detections').textContent = totalDetected.toLocaleString();
         document.getElementById('total-delta').innerHTML =
-          '&#9650; +' + ev.objects.length + ' &nbsp;&middot;&nbsp; ' + ev.timestamp;
+          '&#9650; +' + ev.objects.length + ' &middot; ' + ev.timestamp;
       }
 
       updateHero(ev.objects);
-      updateDotGrid(ev.objects.length);
+      tickBarBucket(ev);
       document.getElementById('scan-time').textContent = 'Last: ' + ev.timestamp;
 
+      // push to activity grid
+      const hasPerson = ev.objects.some(o => o.label === 'person');
+      const detVal    = ev.objects.length === 0 ? 0 : hasPerson ? 2 : 1;
+      const cpuVal    = lastCpu  >= 90 ? 2 : lastCpu  >= 70 ? 1 : 0;
+      const tempVal   = lastTemp >= 80 ? 2 : lastTemp >= 70 ? 1 : 0;
+      pushActivityCol(detVal, cpuVal, tempVal);
+
       if (soundEnabled && ev.objects.length > 0)
-        playBeep(ev.objects.some(o => o.label === 'person') ? 1047 : 660, 0.07);
+        playBeep(hasPerson ? 1047 : 660, 0.07);
 
       const div = document.createElement('div');
       div.className = 'ev-item';
@@ -1295,7 +1411,7 @@ def index():
         } else {
           statusEl.textContent = 'BATTERY'; statusEl.className = 'kv-val ok';
         }
-        if (p.battery_pct !== null) {
+        if (p.battery_pct != null) {
           const pct = p.battery_pct;
           barWrap.style.display = 'block';
           bar.style.width = pct + '%';
@@ -1312,34 +1428,31 @@ def index():
     updatePower(); setInterval(updatePower, 6000);
 
     // ── STATS + FILLED SPARKLINE ──
-    const canvas = document.getElementById('spark-canvas');
-    const ctx2   = canvas.getContext('2d');
+    const sparkCanvas = document.getElementById('spark-canvas');
+    const ctx2        = sparkCanvas.getContext('2d');
 
     function drawSparkline() {
-      const W = canvas.offsetWidth, H = 38;
-      canvas.width = W; canvas.height = H;
+      const W = sparkCanvas.offsetWidth, H = 36;
+      sparkCanvas.width = W; sparkCanvas.height = H;
       ctx2.clearRect(0, 0, W, H);
       [
-        { data: spark.cpu,  stroke: '#f5c518', fill: 'rgba(245,197,24,0.13)',  label: 'CPU' },
-        { data: spark.ram,  stroke: '#00d4ff', fill: 'rgba(0,212,255,0.09)',   label: 'RAM' },
+        { data: spark.cpu,  stroke: '#f5c518', fill: 'rgba(245,197,24,0.12)',  label: 'CPU' },
+        { data: spark.ram,  stroke: '#00d4ff', fill: 'rgba(0,212,255,0.08)',   label: 'RAM' },
         { data: spark.temp, stroke: '#ff003c', fill: 'rgba(255,0,60,0.07)',    label: 'TMP' },
       ].forEach(({ data, stroke, fill, label }, si) => {
         if (data.length < 2) return;
         const step = W / (SPARK_N - 1);
         const pts  = data.map((v, i) => ({
           x: (SPARK_N - data.length + i) * step,
-          y: (H - 7) - (v / 100) * (H - 11)
+          y: (H - 7) - (v / 100) * (H - 10)
         }));
-        // filled area
         ctx2.beginPath(); ctx2.fillStyle = fill;
         pts.forEach((p, i) => i === 0 ? ctx2.moveTo(p.x, p.y) : ctx2.lineTo(p.x, p.y));
         ctx2.lineTo(pts[pts.length-1].x, H); ctx2.lineTo(pts[0].x, H); ctx2.closePath();
         ctx2.fill();
-        // stroke line
         ctx2.beginPath(); ctx2.strokeStyle = stroke; ctx2.lineWidth = 1.5; ctx2.globalAlpha = 0.85;
         pts.forEach((p, i) => i === 0 ? ctx2.moveTo(p.x, p.y) : ctx2.lineTo(p.x, p.y));
         ctx2.stroke(); ctx2.globalAlpha = 1;
-        // legend label
         ctx2.fillStyle = stroke;
         ctx2.font = '8px Share Tech Mono, monospace';
         ctx2.fillText(label, 4 + si * 36, H - 1);
@@ -1370,6 +1483,7 @@ def index():
         yEl.className   = 'strip-value ' + (s.fps_yolo >= 3 ? 'ok' : 'warn');
 
         if (s.cpu_pct != null) {
+          lastCpu = s.cpu_pct;
           setGauge('gauge-cpu-arc', s.cpu_pct);
           document.getElementById('gauge-cpu-val').textContent = s.cpu_pct.toFixed(0) + '%';
           document.getElementById('gauge-cpu-sub').textContent =
@@ -1385,9 +1499,10 @@ def index():
           spark.ram.push(s.ram_pct); if (spark.ram.length > SPARK_N) spark.ram.shift();
         }
         if (s.temp_c != null) {
+          lastTemp = s.temp_c;
           const tp = Math.min(100, ((s.temp_c - 30) / 60) * 100);
           setGauge('gauge-temp-arc', tp);
-          document.getElementById('gauge-temp-val').textContent = s.temp_c + ' \u00b0C';
+          document.getElementById('gauge-temp-val').textContent = s.temp_c + '\u00b0';
           const stripTemp = document.getElementById('strip-temp');
           stripTemp.textContent = s.temp_c + ' \u00b0C';
           stripTemp.className   = 'strip-value ' + (tp >= 75 ? 'crit' : tp >= 60 ? 'warn' : 'ok');
@@ -1414,6 +1529,9 @@ def index():
       Object.assign(document.createElement('a'), { href: '/snapshot', download: '' }).click();
       setTimeout(() => { btn.classList.remove('flash'); btn.innerHTML = '&#9654; SNAPSHOT'; }, 1200);
     }
+
+    // Initial bar draw
+    drawBarChart();
   </script>
 </body>
 </html>"""
