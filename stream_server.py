@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, send_from_directory
 from picamera2 import Picamera2
 from ultralytics import YOLO
 import libcamera
@@ -357,6 +357,11 @@ def events():
 
     return Response(stream(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/emotion_detection/<path:filename>")
+def emotion_static(filename):
+    return send_from_directory("emotion_detection", filename)
 
 
 @app.route("/")
@@ -804,6 +809,8 @@ def index():
 
     @keyframes blink { 50% { opacity: 0; } }
   </style>
+  <link rel="stylesheet" href="/emotion_detection/emotion_styles.css">
+  <script src="https://unpkg.com/ml5@1/dist/ml5.min.js"></script>
 </head>
 <body>
 
@@ -817,6 +824,7 @@ def index():
       <div class="shortcut-row"><span class="kbd">A</span><span class="shortcut-desc">Toggle sound alerts</span></div>
       <div class="shortcut-row"><span class="kbd">C</span><span class="shortcut-desc">Clear event log</span></div>
       <div class="shortcut-row"><span class="kbd">E</span><span class="shortcut-desc">Export event log</span></div>
+      <div class="shortcut-row"><span class="kbd">M</span><span class="shortcut-desc">Toggle emotion detection</span></div>
       <div class="shortcut-row"><span class="kbd">?</span><span class="shortcut-desc">Show / hide shortcuts</span></div>
       <div class="shortcut-row"><span class="kbd">Esc</span><span class="shortcut-desc">Close overlay</span></div>
     </div>
@@ -1533,6 +1541,9 @@ def index():
     // Initial bar draw
     drawBarChart();
   </script>
+  <script src="/emotion_detection/emotion_engine.js"></script>
+  <script src="/emotion_detection/facemesh_controller.js"></script>
+  <script src="/emotion_detection/emotion_ui.js"></script>
 </body>
 </html>"""
 

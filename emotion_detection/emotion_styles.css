@@ -1,0 +1,147 @@
+/* ── Emotion Detection Panel ── */
+
+.emotion-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.emotion-panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--magenta) 0%, transparent 100%);
+}
+
+/* ── Alert banner ── */
+.emotion-alert {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--magenta);
+  background: rgba(255, 0, 60, 0.08);
+  border: 1px solid rgba(255, 0, 60, 0.25);
+  border-radius: 4px;
+  padding: 5px 8px;
+  animation: blink 1s step-start infinite;
+}
+
+/* ── Header ── */
+.emotion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.emotion-title {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.5rem;
+  color: var(--text2);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.emotion-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 1px;
+  border-radius: 4px;
+  padding: 2px 7px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text2);
+}
+
+.emotion-badge.live {
+  background: rgba(0, 230, 118, 0.07);
+  border-color: rgba(0, 230, 118, 0.2);
+  color: var(--green);
+}
+
+.emotion-badge.warn {
+  background: rgba(255, 140, 0, 0.07);
+  border-color: rgba(255, 140, 0, 0.2);
+  color: var(--orange);
+}
+
+.emotion-badge.crit {
+  background: rgba(255, 0, 60, 0.07);
+  border-color: rgba(255, 0, 60, 0.2);
+  color: var(--magenta);
+  animation: blink 1s step-start infinite;
+}
+
+/* ── Bar list ── */
+.emotion-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.emotion-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.emotion-bar-row.confusion-row {
+  background: rgba(255, 0, 60, 0.04);
+  border-left: 2px solid var(--magenta);
+  padding-left: 6px;
+  margin-left: -6px;
+  border-radius: 0 3px 3px 0;
+}
+
+.emotion-label {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.48rem;
+  letter-spacing: 1px;
+  color: var(--text2);
+  width: 70px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.emotion-label.confusion-label {
+  color: var(--magenta);
+  font-weight: bold;
+}
+
+.emotion-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--dim);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.emotion-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.25s ease;
+  min-width: 0;
+}
+
+.emotion-val {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  width: 32px;
+  text-align: right;
+  flex-shrink: 0;
+}
