@@ -10,15 +10,58 @@ import subprocess
 from collections import deque
 from datetime import datetime
 
-# INA219 battery monitor — optional, graceful fallback if not connected
+# ADS7830 battery monitor (Freenove board at 0x48, I2C bus 1)
+import smbus as _smbus_mod
 try:
-    from ina219 import INA219, DeviceRangeError
-    INA219_AVAILABLE = True
-    SHUNT_OHMS = 0.1
-    BATTERY_MAX_V = 16.8
-    BATTERY_MIN_V = 12.0
-except ImportError:
-    INA219_AVAILABLE = False
+    _adc_bus = _smbus_mod.SMBus(1)
+    ADC_AVAILABLE = True
+except Exception:
+    _adc_bus = None
+    ADC_AVAILABLE = False
+
+ADC_ADDR  = 0x48
+ADC_COEFF = 3  # Freenove voltage divider coefficient
+
+def _adc_read_channel(ch):
+    cmd = 0x84 | ((((ch << 2) | (ch >> 1)) & 0x07) << 4)
+    _adc_bus.write_byte(ADC_ADDR, cmd)
+    time.sleep(0.01)
+    v1 = _adc_bus.read_byte(ADC_ADDR)
+    v2 = _adc_bus.read_byte(ADC_ADDR)
+    raw = v1 if v1 == v2 else (v1 + v2) // 2
+    return round(raw / 255.0 * 5 * ADC_COEFF, 2)
+
+def read_battery_voltages():
+    if not ADC_AVAILABLE:
+        return None, None
+    try:
+        return _adc_read_channel(0), _adc_read_channel(4)
+    except Exception:
+        return None, None
+
+# 2S 18650 pack: 8.4V full, 6.0V empty
+SOC_CURVE = [
+    (8.40, 100.0), (8.20, 95.0), (8.00, 88.0), (7.80, 78.0),
+    (7.60,  65.0), (7.40, 50.0), (7.20, 35.0), (7.00, 20.0),
+    (6.80,  10.0), (6.40,  5.0), (6.00,  0.0),
+]
+BATTERY_CAPACITY_MAH = 5000  # 2× 2500 mAh 18650
+
+def voltage_to_soc(v):
+    for i, (vt, pct) in enumerate(SOC_CURVE):
+        if v >= vt:
+            if i == 0:
+                return 100.0
+            v_hi, p_hi = SOC_CURVE[i - 1]
+            v_lo, p_lo = vt, pct
+            return round(p_lo + (v - v_lo) / (v_hi - v_lo) * (p_hi - p_lo), 1)
+    return 0.0
+
+def estimate_runtime(soc, current_ma=500):
+    remaining_mah = (soc / 100.0) * BATTERY_CAPACITY_MAH
+    if current_ma and current_ma > 0:
+        return round(remaining_mah / current_ma * 60)
+    return None
 
 app = Flask(__name__)
 
@@ -50,7 +93,7 @@ def start_camera():
     global cam
     cam = Picamera2()
     config = cam.create_video_configuration(
-        main={"size": (640, 480), "format": "RGB888"},
+        main={"size": (1920, 1080), "format": "RGB888"},
         controls={
             "FrameRate": 30,
             "AwbEnable": True,
@@ -179,7 +222,7 @@ def stream_loop():
             if frame is None:
                 time.sleep(0.01)
                 continue
-            bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            bgr = frame  # treat RGB as BGR — swaps R↔B in stream per user preference
             with boxes_lock:
                 boxes = list(last_boxes)
             bgr = draw_boxes(bgr, boxes)
@@ -243,12 +286,18 @@ def get_system_stats():
             temp_c = round(int(f.read().strip()) / 1000, 1)
     except Exception:
         temp_c = None
+    try:
+        with open("/sys/class/hwmon/hwmon2/fan1_input") as f:
+            fan_rpm = int(f.read().strip())
+    except Exception:
+        fan_rpm = None
     return {
         "cpu_pct":   cpu,
         "ram_pct":   ram_pct,
         "ram_used":  ram_used,
         "ram_total": ram_total,
         "temp_c":    temp_c,
+        "fan_rpm":   fan_rpm,
     }
 
 
@@ -317,20 +366,17 @@ def power():
         result["source"] = "wall"
     except Exception:
         pass
-    if INA219_AVAILABLE:
+    if ADC_AVAILABLE:
         try:
-            ina = INA219(SHUNT_OHMS)
-            ina.configure()
-            voltage = ina.voltage()
-            try:
-                current = ina.current()
-            except DeviceRangeError:
-                current = None
-            pct = max(0.0, min(100.0, (voltage - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V) * 100))
-            result["voltage"] = round(voltage, 2)
-            result["current_ma"] = round(current, 1) if current is not None else None
-            result["battery_pct"] = round(pct, 1)
-            result["source"] = "charging" if (current and current > 50) else "battery"
+            v1, v2 = read_battery_voltages()
+            if v2 is not None:
+                soc     = voltage_to_soc(v2)
+                runtime = estimate_runtime(soc)
+                result["voltage"]      = v2
+                result["voltage_cell"] = v1
+                result["battery_pct"]  = soc
+                result["runtime_min"]  = runtime
+                result["source"]       = "battery"
         except Exception:
             pass
     return jsonify(result)
@@ -982,20 +1028,40 @@ def index():
             </svg>
           </div>
 
-          <!-- TEMP gauge -->
-          <div class="gauge-card g-temp">
-            <span class="gauge-eyebrow">CPU Temp</span>
-            <svg class="gauge-svg" viewBox="0 0 100 72">
-              <path d="M 18,64 A 40,40 0 1 1 82,64"
-                fill="none" stroke="var(--dim)" stroke-width="6" stroke-linecap="round"/>
-              <path id="gauge-temp-arc" d="M 18,64 A 40,40 0 1 1 82,64"
-                fill="none" stroke="var(--magenta)" stroke-width="6" stroke-linecap="round"
-                stroke-dasharray="0 209.4" style="transition:stroke-dasharray 0.6s ease;"/>
-              <text id="gauge-temp-val" x="50" y="50" text-anchor="middle"
-                font-family="Rajdhani, sans-serif" font-size="17" font-weight="700" fill="#ddeee4">--&deg;</text>
-              <text x="50" y="63" text-anchor="middle"
-                font-family="Share Tech Mono, monospace" font-size="5.5" fill="#4a6655">THERMAL</text>
-            </svg>
+          <!-- TEMP + FAN gauge -->
+          <div class="gauge-card g-temp" style="flex:2;">
+            <div style="display:flex;width:100%;gap:6px;align-items:flex-start;">
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;">
+                <span class="gauge-eyebrow">CPU Temp</span>
+                <svg style="width:100%;max-width:110px;display:block;" viewBox="0 0 100 72">
+                  <path d="M 18,64 A 40,40 0 1 1 82,64"
+                    fill="none" stroke="var(--dim)" stroke-width="6" stroke-linecap="round"/>
+                  <path id="gauge-temp-arc" d="M 18,64 A 40,40 0 1 1 82,64"
+                    fill="none" stroke="var(--magenta)" stroke-width="6" stroke-linecap="round"
+                    stroke-dasharray="0 209.4" style="transition:stroke-dasharray 0.6s ease;"/>
+                  <text id="gauge-temp-val" x="50" y="50" text-anchor="middle"
+                    font-family="Rajdhani, sans-serif" font-size="17" font-weight="700" fill="#ddeee4">--&deg;</text>
+                  <text x="50" y="63" text-anchor="middle"
+                    font-family="Share Tech Mono, monospace" font-size="5.5" fill="#4a6655">THERMAL</text>
+                </svg>
+              </div>
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;">
+                <span class="gauge-eyebrow">Fan Speed</span>
+                <svg style="width:100%;max-width:110px;display:block;" viewBox="0 0 100 72">
+                  <path d="M 18,64 A 40,40 0 1 1 82,64"
+                    fill="none" stroke="var(--dim)" stroke-width="6" stroke-linecap="round"/>
+                  <path id="gauge-fan-arc" d="M 18,64 A 40,40 0 1 1 82,64"
+                    fill="none" stroke="var(--cyan)" stroke-width="6" stroke-linecap="round"
+                    stroke-dasharray="0 209.4" style="transition:stroke-dasharray 0.6s ease;"/>
+                  <text id="fan-rpm" x="50" y="48" text-anchor="middle"
+                    font-family="Rajdhani, sans-serif" font-size="13" font-weight="700" fill="#ddeee4">--</text>
+                  <text x="50" y="59" text-anchor="middle"
+                    font-family="Share Tech Mono, monospace" font-size="5" fill="#4a6655">RPM</text>
+                  <text id="fan-rpm-sub" x="50" y="68" text-anchor="middle"
+                    font-family="Share Tech Mono, monospace" font-size="5" fill="#4a6655">FAN</text>
+                </svg>
+              </div>
+            </div>
           </div>
 
         </div><!-- /gauge-row -->
@@ -1037,6 +1103,22 @@ def index():
               </div>
               <div id="battery-bar-wrap" class="batt-wrap" style="display:none">
                 <div id="battery-bar" class="batt-bar"></div>
+              </div>
+              <div class="kv-row">
+                <span class="kv-label">Voltage</span>
+                <span class="kv-val" id="batt-voltage">--</span>
+              </div>
+              <div class="kv-row">
+                <span class="kv-label">Runtime</span>
+                <span class="kv-val ok" id="batt-runtime">--</span>
+              </div>
+              <div class="kv-row">
+                <span class="kv-label">Current</span>
+                <span class="kv-val" style="font-family:'Share Tech Mono',monospace;font-size:0.46rem;color:var(--text2);">N/A (ADC only)</span>
+              </div>
+              <div class="kv-row">
+                <span class="kv-label">Throttle</span>
+                <span class="kv-val ok" id="throttle-status">--</span>
               </div>
             </div>
             <button class="card-action" onclick="toggleShortcuts()">Diagnostics &rarr;</button>
@@ -1098,6 +1180,7 @@ def index():
     // Sparkline
     const SPARK_N = 45;
     const spark   = { cpu: [], ram: [], temp: [] };
+    const FAN_MAX = 10000;
 
     // Gauge arc: M 18,64 A 40,40 0 1 1 82,64  radius=40, 300° arc
     // Arc length = 2*PI*40*(300/360) = 209.4
@@ -1431,6 +1514,33 @@ def index():
           pctChip.textContent = 'N/A';
           pctChip.className = 'kv-val';
         }
+
+        const voltEl    = document.getElementById('batt-voltage');
+        const runtimeEl = document.getElementById('batt-runtime');
+        const throttleEl = document.getElementById('throttle-status');
+
+        if (p.voltage != null) {
+          voltEl.textContent = p.voltage.toFixed(2) + 'V';
+          voltEl.className = 'kv-val ' + (p.voltage > 7.0 ? 'ok' : p.voltage > 6.4 ? 'warn' : 'crit');
+        }
+
+        if (p.runtime_min != null) {
+          const h = Math.floor(p.runtime_min / 60);
+          const m = Math.round(p.runtime_min % 60);
+          runtimeEl.textContent = (h > 0 ? h + 'h ' : '') + m + 'm';
+          runtimeEl.className = 'kv-val ' + (p.runtime_min > 60 ? 'ok' : p.runtime_min > 20 ? 'warn' : 'crit');
+        }
+
+        if (p.throttled) {
+          throttleEl.textContent = 'THROTTLED';
+          throttleEl.className = 'kv-val crit';
+        } else if (p.under_voltage) {
+          throttleEl.textContent = 'UNDER-V';
+          throttleEl.className = 'kv-val warn';
+        } else {
+          throttleEl.textContent = 'OK';
+          throttleEl.className = 'kv-val ok';
+        }
       }).catch(() => {});
     }
     updatePower(); setInterval(updatePower, 6000);
@@ -1486,6 +1596,17 @@ def index():
       fetch('/stats').then(r => r.json()).then(s => {
         document.getElementById('fps-cam').textContent    = s.fps_camera != null ? s.fps_camera : '--';
         document.getElementById('fps-stream').textContent = s.fps_stream != null ? s.fps_stream : '--';
+
+        if (s.fan_rpm != null) {
+          const rpm = s.fan_rpm;
+          const pct = Math.min(100, (rpm / FAN_MAX) * 100);
+          const arc = document.getElementById('gauge-fan-arc');
+          arc.setAttribute('stroke-dasharray', (pct / 100 * 209.4).toFixed(1) + ' 209.4');
+          arc.setAttribute('stroke', rpm > 8000 ? 'var(--orange)' : 'var(--cyan)');
+          document.getElementById('fan-rpm').textContent = rpm.toLocaleString();
+          document.getElementById('fan-rpm-sub').textContent =
+            rpm > 8000 ? 'HIGH' : rpm > 3000 ? 'NORMAL' : 'LOW';
+        }
         const yEl = document.getElementById('fps-yolo');
         yEl.textContent = s.fps_yolo != null ? s.fps_yolo : '--';
         yEl.className   = 'strip-value ' + (s.fps_yolo >= 3 ? 'ok' : 'warn');
