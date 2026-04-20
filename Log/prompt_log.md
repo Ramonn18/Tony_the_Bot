@@ -844,3 +844,138 @@ move it next to the CPU TEMP Meter
 Done. The CPU Temp card now has two stacked arc gauges — the top one for temperature (magenta) and the mini one below for fan speed (cyan), with the same arc style, updating every 2 seconds. Status labels: `NORMAL`, `HIGH`, or `LOW` based on RPM range.
 
 ---
+
+---
+
+**[2026-04-18 14:04:49] User:**
+cool, now can you help me start with indetifing tony's legs, so that we can create a calibration stage everytime tony starts to make sure eveyrhing is working properly
+
+**[2026-04-18 14:06:58] Assistant:**
+Now sync both files to Tony.
+
+---
+
+---
+
+**[2026-04-18 14:08:11] User:**
+ssh tony1@192.168.1.189
+
+**[2026-04-18 14:08:19] Assistant:**
+Both files are on Tony. Here's the workflow:
+
+**Step 1 — Label Tony physically** (tape/sticker on each leg):
+```
+     FRONT
+  1       2
+  3       4
+  5       6
+     BACK
+```
+
+**Step 2 — Run identification** (needs a real SSH terminal, not `!`):
+```bash
+ssh tony1@192.168.1.189
+python3 /home/tony1/Tony_the_Bot/leg_identify.py
+```
+It wiggles one servo at a time, you type which leg + joint moved. Results save to `servo_map.json`.
+
+**Step 3 — Run calibration** (automated from there):
+```bash
+python3 /home/tony1/Tony_the_Bot/calibration.py
+```
+
+Once `servo_map.json` exists, `calibration.py` can also be imported into any other script to auto-run on startup. Ready to label the legs?
+
+---
+
+---
+
+**[2026-04-18 14:14:33] User:**
+what is causing high cpu load in tony?
+
+**[2026-04-18 14:18:22] Assistant:**
+Two `stream_server.py` processes are running — the old one (PID 582355, 265% CPU) never got fully killed, plus the new one (PID 909623, 98% CPU). Together they're eating ~363% CPU and both loading YOLO models simultaneously.
+
+Also `leg_identify.py` is still running in the background from your SSH session.
+
+---
+
+---
+
+**[2026-04-18 14:20:37] User:**
+can we make sure this doesnt happen again, is this why is taking long for the servos to activate?
+
+**[2026-04-18 14:24:46] Assistant:**
+Now sync and restart.
+
+---
+
+---
+
+**[2026-04-18 14:29:58] User:**
+lets try to indentify the legs now and following the task planned for this stage
+
+**[2026-04-18 14:30:46] Assistant:**
+Let me verify the script is ready on Tony and check if the boards are detected before you start.
+
+---
+
+---
+
+**[2026-04-18 15:01:44] User:**
+tonys legs are label with tape, i try testing Step 2 but nothing is happening, why is the leg no moving?
+
+**[2026-04-18 15:02:25] Assistant:**
+Let me run a quick direct servo test to diagnose why nothing is moving.
+
+---
+
+---
+
+**[2026-04-18 15:03:45] User:**
+is there, what is taking so much energy  of the battery
+
+**[2026-04-18 15:11:39] Assistant:**
+There it is — **`tony-stream.service`** is a systemd service that auto-restarts the server. That's why killing it by PID never sticks.
+
+---
+
+---
+
+**[2026-04-18 15:13:29] User:**
+i will charge the batteries now, remind me of  this state of the session for when i come back
+
+**[2026-04-18 15:13:53] Assistant:**
+Stream server is fully dead. Temp already dropped to **52°C**. Here's the full picture:
+
+**Why the battery was draining so fast:**
+1. `tony-stream.service` — a systemd service was auto-restarting the server every time it was killed, so there was often 2–3 instances of YOLOv8 running at once (300%+ CPU constantly)
+2. The stream server was set to **run on boot** — it was ALWAYS running, even when you just needed servos
+
+**What's fixed:**
+- Service is stopped and disabled — no more auto-restart
+- **Servos now have full battery power available**
+
+**To start the stream when you need it**, run manually:
+```bash
+! sshpass -p '0406tonybd26' ssh tony1@192.168.1.189 "nohup python3 /home/tony1/Tony_the_Bot/stream_server.py > /home/tony1/Tony_the_Bot/stream.log 2>&1 &"
+```
+
+Now open a terminal, SSH into Tony, and run `leg_identify.py` — the servos should move with the battery freed up.
+
+---
+
+---
+
+**[2026-04-18 15:14:36] User:**
+turn of tony now and end session
+
+**[2026-04-18 15:14] Assistant:**
+Shut Tony down via `sudo poweroff`. Session ended. Batteries charging — resume with leg_identify.py next session.
+
+---
+
+**[2026-04-18 15:15:22] Assistant:**
+Now let me log the session end.
+
+---

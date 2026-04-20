@@ -7,8 +7,35 @@ import threading
 import time
 import json
 import subprocess
+import os
+import signal
+import atexit
 from collections import deque
 from datetime import datetime
+
+# ── PID LOCK — kill any previous instance before starting ──────────────────
+_PID_FILE = "/tmp/tony_stream.pid"
+
+def _enforce_single_instance():
+    if os.path.exists(_PID_FILE):
+        try:
+            old_pid = int(open(_PID_FILE).read().strip())
+            os.kill(old_pid, signal.SIGKILL)
+            time.sleep(1)
+            print(f"Killed previous instance (PID {old_pid})")
+        except (ProcessLookupError, ValueError):
+            pass
+    with open(_PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def _remove_pid_file():
+    try:
+        os.remove(_PID_FILE)
+    except FileNotFoundError:
+        pass
+
+_enforce_single_instance()
+atexit.register(_remove_pid_file)
 
 # ADS7830 battery monitor (Freenove board at 0x48, I2C bus 1)
 import smbus as _smbus_mod
