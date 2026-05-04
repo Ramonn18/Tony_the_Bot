@@ -42,6 +42,6 @@ class Config:
     START_PHRASE: str = "i have a question"
     STOP_PHRASE:  str = "thank you"
 
- # Professor Discord user IDs (comma-separated in .env)
+    # Professor Discord user IDs (comma-separated in .env)
     _prof_env = os.getenv("PROFESSOR_IDS", "182644353137770497")
     PROFESSOR_IDS: set[int] = {int(i) for i in _prof_env.split(",") if i.strip()}

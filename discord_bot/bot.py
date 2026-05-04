@@ -453,6 +453,16 @@ async def on_ready():
         _creature_queue = asyncio.Queue(maxsize=10)
         asyncio.create_task(_creature_worker())
         print("[Tony] Creature movement system ready")
+
+        # Announce in the Q&A channel that Tony is online
+        ch = bot.get_channel(Config.QUESTIONS_CHANNEL_ID)
+        if ch:
+            await ch.send(
+                "👋 **Tony is online and ready!**\n"
+                "Ask me anything in this channel, join a voice channel, or try `!pose wave` to say hi."
+            )
+        creature_cmd("pulse")  # startup wave animation
+
     print(f"[Tony] Online as {bot.user} (ID: {bot.user.id})")
     print(f"[Tony] Q&A channel : {Config.QUESTIONS_CHANNEL_ID}")
     print(f"[Tony] General     : {Config.GENERAL_CHANNEL_ID}")

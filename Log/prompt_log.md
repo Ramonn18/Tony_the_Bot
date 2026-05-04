@@ -3262,3 +3262,656 @@ The fix: make the trigger flexible — just require **"tony"** and **"question"*
 
 **[2026-05-03 16:01:57] User:**
 end session here
+
+---
+
+**[2026-05-04 10:25:06] User:**
+cool tony is ready for this session, lets check on the batteries and cpu load first before we start
+
+**[2026-05-04 10:26:04] Assistant:**
+Let me SSH into Tony and pull both readings at once.
+
+Looks like the output file is empty — the SSH command may have timed out or the connection dropped. Let me try a direct simpler check.
+
+---
+
+---
+
+**[2026-05-04 10:26:34] User:**
+tony is in school network currently as tony1@10.1.65.108
+
+---
+
+**[2026-05-04 10:27:37] User:**
+do this for me me tony's password is the same as at home
+
+---
+
+**[2026-05-04 10:31:02] User:**
+well as what we know form last session tony has problems with the servos not being able to hold the weight, which is a servo malfuntion, however the servos still move and work so instead of moving lets make tony like an stationary CA, that can move its legs, like an octopus but with six legs. from here, can we work from Tony flat mode as base for a lot of other movements? if you have question lets me know
+
+**[2026-05-04 10:32:25] Assistant:**
+Love this direction — stationary expressive creature is much more achievable with the current servo situation, and the flat pose is a perfect neutral home position. Let me look at the current codebase state before I ask anything.
+
+Good — servo map is complete for all 6 legs, and `tony_flat` has all the angles. Let me check the existing gait/movement code before planning.
+
+---
+
+---
+
+**[2026-05-04 10:41:25] User:**
+lets wire it to discord commands but remember the movements should be reactive as well, like for example if tony is loading a question his legs should do some sorth of wave going from leg 1 to 6 to simbolice loading, something like this, also tonys head and yolo camera should be able to move around when activated by a question to look for a person, how can we achive this as well
+
+**[2026-05-04 10:44:35] Assistant:**
+Good additions. Let me check the current brain and camera code before I lay out the full architecture.
+
+Perfect. Now I have the full picture. Let me check the Discord bot's question-handling flow too before I lay out the architecture.
+
+---
+
+---
+
+**[2026-05-04 10:49:32] User:**
+yes tony should triger greeting automatically when a student joins. but also as a command for the students to have fun how ever not mutliple commands at onces lets make sure that when students do commands they happen one after the other like in queue, and for after  responce state lets make him idle after 4 seconds of the responce
+
+**[2026-05-04 10:59:16] Assistant:**
+Clear plan. Let me read the local bot.py to confirm it matches what's on the Pi, then I'll build both files.
+
+Good. Now I'll build both files. Starting with the new `tony_creature.py`, then the `bot.py` modifications.
+
+Now let me read the local bot.py to make the surgical edits.
+
+Now I'll make all the edits to bot.py.
+
+Now add the `!pose` and `!queue` commands and update `!thelp`.
+
+Now commit locally and push, then pull on the Pi.
+
+Push needs GitHub credentials. I'll copy the files directly to the Pi instead.
+
+Both files are on Tony. Let me verify they landed correctly and check for any obvious syntax issues.
+
+---
+
+---
+
+**[2026-05-04 10:59:52] User:**
+let me ask a question first before we start, is the discord answer directly from the git hub and not from Tony it self ?
+
+---
+
+**[2026-05-04 11:01:15] User:**
+ok lets do a tes run,
+
+**[2026-05-04 11:03:15] Assistant:**
+Let me check what's currently running on Tony first, then start the creature.
+
+Tony brain and Discord are both running. I need to restart the Discord service to load the new bot.py, then start the creature. Let me do both.
+
+Tony creature is running (PID 2090) and moved to the flat pose. The log only shows the startup line which means the main loop is running silently (no errors). 
+
+Now let's test it — send a manual command to trigger the wave animation:
+
+The creature picked up the command — you should have seen the legs do a ripple wave 1→6. Let's test a couple more:
+
+---
+
+---
+
+**[2026-05-04 11:04:25] User:**
+where in discord can i do that pose test?
+
+**[2026-05-04 11:04:41] Assistant:**
+Let me check the config to see exactly which channels the bot is in.
+
+---
+
+---
+
+**[2026-05-04 11:05:51] User:**
+nothing is happening is there a problem with the descord bot, does it need to in a chat room for that
+
+**[2026-05-04 11:08:12] Assistant:**
+Let me check the Discord service logs to see what's happening.
+
+Found it — `Config.PROFESSOR_IDS` is crashing every message. The Pi's `config.py` is missing that attribute. Let me check it.
+
+The Pi's config.py is missing `PROFESSOR_IDS` entirely — it's an older version. I'll fix the local copy too (the comment has a stray space) and push it to the Pi.
+
+---
+
+---
+
+**[2026-05-04 11:15:47] User:**
+yes tony is responding to the discord commands now.Lets work on adjusting an refining the movements for wach current
+
+**[2026-05-04 11:21:48] Assistant:**
+That's a very clear explanation. The issue is the sine wave oscillates both `+` and `-` around the flat pose. Since flat is the floor, the `-` half tries to push through it. The fix is simple — shift the wave so it only ever goes above home, never below.
+
+Let me fix `anim_breathe` in `tony_creature.py`.
+
+Now push to the Pi and restart the creature process.
+
+Good — creature already stopped (probably stopped itself after the first SCP). Let me restart it cleanly.
+
+---
+
+---
+
+**[2026-05-04 11:23:27] User:**
+it still goes down and under trying to lift it, can we adjust this pose and state manually ?
+
+**[2026-05-04 11:25:41] Assistant:**
+The issue is that for some legs, adding to femur actually pushes DOWN physically, because the servos are mirrored on opposite sides. I need to know the correct direction per leg before guessing. Let me look at `pose_tuner.py` first — it might be the easiest way to figure this out together.
+
+The core problem is that for legs on opposite sides of Tony's body, the femur servo direction is mirrored — so adding to femur lifts one side but pushes the other into the ground. I can't fix it by guessing; we need to find the correct direction per leg by testing.
+
+Here's the plan:
+1. Stop the creature (frees the servos)
+2. Run `pose_tuner.py` from flat pose
+3. Test femur up/down on each leg to find the correct "lift" direction
+4. Hardcode those directions into the breathe config
+
+Let me stop the creature and give you the command to run pose_tuner interactively:
+
+---
+
+---
+
+**[2026-05-04 11:28:46] User:**
+for leg 1 femur going from 105 to 120 goes down and going from 105 to 90 it lifts the leg Up(away from the ground)
+
+---
+
+**[2026-05-04 11:35:57] User:**
+leg 2 femur from 75 to 90 lifts up. Leg 3 femur from 110 to 95 lifts up, Leg 4 from 100 to 115 lifts up, leg 5 femur from 89 to 74 lifts up, 6 femur from 95 to 110 lifts up
+
+**[2026-05-04 11:39:57] Assistant:**
+I have all 6 legs now:
+
+| Leg | Home | UP = |
+|-----|------|------|
+| 1 | 105 | decrease (−) |
+| 2 | 75 | increase (+) |
+| 3 | 110 | decrease (−) |
+| 4 | 100 | increase (+) |
+| 5 | 89 | decrease (−) |
+| 6 | 95 | increase (+) |
+
+Classic mirror pattern — odd legs one side, even legs the other. I'll add a `LEG_LIFT` direction map and fix **all** femur-based animations at once so they all behave correctly.
+
+Now fix every animation that moves femur:
+
+Now push to the Pi and restart the creature:
+
+---
+
+---
+
+**[2026-05-04 11:41:59] User:**
+ok lets refine and adjust tonys idle pose, lets make idle mode like a wave, movement start from righ to left going from R: legs 1/3/5 to L: legs 6/4/2 that makes a full circle and repeat. how does that sound
+
+**[2026-05-04 11:43:38] Assistant:**
+That sounds great — a slow continuous circle: right side out (1→3→5) then left side back (6→4→2), looping forever. It'll look like a slow ripple going around Tony's body, like a resting octopus. Let me replace `anim_breathe` with this.
+
+---
+
+---
+
+**[2026-05-04 11:44:48] User:**
+it looks good so far, can we add a little movement in the tibia of each leg as well to make the animation  feel more fluid
+
+**[2026-05-04 11:46:22] Assistant:**
+Good idea — adding a slight tibia curl that follows just behind the femur will give each leg a natural "ripple through the limb" feel. I'll add it with a small phase delay so the tibia follows slightly after the femur peaks.
+
+---
+
+---
+
+**[2026-05-04 11:47:29] User:**
+tibia direction is good, lets curl up to 10 and that should be good now for idle animation
+
+---
+
+**[2026-05-04 11:50:12] User:**
+wait before that, lets make sure idel mode runs evry 15 minutes for like 10 seconds, we dont want to disrupt the class with constant movement, adding interval of movements help as a reminder that tony is available for any questions
+
+**[2026-05-04 11:52:30] Assistant:**
+Clean idea — Tony stays still most of the time so he's not distracting during class, then does a gentle 10-second wave every 15 minutes as a "hey, I'm here" reminder.
+
+Here's the approach:
+- `"idle"` state = completely still (flat pose, no movement) — default after every interaction
+- A background timer fires every 15 minutes, plays the circular wave for 10 seconds, then returns to still
+- No changes needed to bot.py since it already sends `"idle"` after questions
+
+Now update `ANIM_MAP` to point `"idle"` to `anim_still`, and add the timer thread:
+
+Now start the timer thread in `main()`:
+
+Push and restart:
+
+---
+
+---
+
+**[2026-05-04 11:52:31] User:**
+also lets run idel mode whenever Tony starts (its turn on)
+
+**[2026-05-04 11:56:10] Assistant:**
+Simple fix — just set the initial state to `"pulse"` instead of `"idle"` so it plays the wave on startup, then settles into still.
+
+The cmd listener is picking up a stale old `"idle"` command from `/tmp/tony_cmd.json` left by the previous run. I need to clear it on startup so the listener doesn't override the startup wave.
+
+The stale override is gone. The startup wave is playing right now — no log line because this initial state is set directly in code, not through the listener. Let me confirm the transition happens after 10 seconds:
+
+The creature is running fine — the log only prints listener-triggered changes. The startup wave played for its 10 seconds and Tony is now still. Let me add a quick log line for the StopIteration transition so you can confirm it in the future:
+
+Also spotted a bug there — the old code was using `anim_breathe()` after StopIteration but "idle" now maps to `anim_still`. Fixed that too. Push and restart:
+
+---
+
+---
+
+**[2026-05-04 11:57:05] User:**
+whay are tonys legs shacky now did something happened in the code, or is it the batteries ?
+
+**[2026-05-04 12:01:06] Assistant:**
+Two likely causes — let me check battery voltage first and also look at the code for a potential servo spam issue.
+
+Battery sensor not responding (same as before — Tony is on direct power, no battery reading). But "legs struggle to lift" is a strong sign of **power brownout** — the servo load is drawing too much when all legs try to move at once. Also, our `anim_still` state is sending servo commands 50 times per second even when doing nothing, which adds unnecessary PWM load.
+
+Two fixes right now:
+
+1. **Skip servo updates when idle** — no PWM spam, servos hold position passively
+2. **Stagger the startup wave** so not all legs try to move from the same position at once
+
+Also reduce the wave amplitude slightly and slow it down a bit to ease the power demand during the startup wave:
+
+Multiple creature processes are running — that's what's causing the shakiness. They're all fighting over the same servos at once. Let me kill them all and restart just one.
+
+Good. Now I'll also add a PID lock to tony_creature.py so this can never happen again, then start a single clean instance.
+
+---
+
+---
+
+**[2026-05-04 13:40:55] User:**
+hi tonys started but no animation and responce from the discord bot and in the discord server is there a reason y it doens't respond automatically when it comes online, not even the wiggle animation when he comes online happened, why is all of that?
+
+**[2026-05-04 13:44:16] Assistant:**
+Let me check both services at once.
+
+Two problems found:
+1. **tony_creature.py is not running** — it's not a systemd service so it doesn't auto-start on boot
+2. **Discord bot running but silent** — let me check its logs for errors
+
+Let me check Discord logs and fix both issues:
+
+The bot logs are completely empty — it's running but never printed anything, which means `on_ready` never fired. It's likely in a stuck state. Let me restart both the Discord service and start creature as a proper systemd service so both auto-start on boot.
+
+Now create a systemd service for tony_creature so it always starts automatically:
+
+**Discord bot is back online** ✓ — the earlier silence was just a stuck process.
+
+**Creature is failing** — `No I2C device at address: 0x40`. The servo controller board (PCA9685) isn't being detected. This is a hardware issue, not code. Let me check what's actually on the I2C bus right now:
+
+---
+
+---
+
+**[2026-05-04 13:44:27] User:**
+so can we make sure that when tony comes online so does the discord bot, we have to make sure both are awake to work together well.
+
+**[2026-05-04 13:45:55] Assistant:**
+Two things to fix:
+1. Add a startup announcement in Discord when the bot comes online so everyone knows Tony is ready
+2. Verify both services are properly enabled to auto-start on boot together
+
+All 4 services are enabled. Now add the startup Discord announcement to `on_ready` in bot.py:
+
+---
+
+---
+
+**[2026-05-04 13:46:33] User:**
+ok now lets make sure the legs work, make tony wiggle
+
+**[2026-05-04 13:46:50] Assistant:**
+Let me check if the I2C bus is back and the creature is running first:
+
+---
+
+---
+
+**[2026-05-04 13:49:38] User:**
+lets make sure we are ssh to tony1@10.1.66.42
+
+---
+
+**[2026-05-04 13:50:32] User:**
+lets make sure we are ssh to tony1@10.1.65.108
+
+---
+
+**[2026-05-04 13:50:56] User:**
+yes the wiring is good
+
+**[2026-05-04 13:53:35] Assistant:**
+Let me check if I2C is actually enabled on the Pi, and try the other bus:
+
+I2C is enabled and there are multiple buses (1, 4, 11, 13, 14). Let me scan all of them to find where the servo boards are:
+
+Found them! **Bus 13** has 0x40 and 0x41. The servo boards are there, just on a different bus than expected (Raspberry Pi 5 uses different bus numbering). I need to update the code to use bus 13.
+
+Let me check how to pass the right bus to ServoKit:
+
+Now update `_get_kit` in `tony_creature.py` to use bus 13:
+
+Push it and restart the creature service:
+
+The device isn't actually at bus 13 — that was a false positive from an internal Pi 5 bus. Let me find the real one by testing each bus directly:
+
+---
+
+---
+
+**[2026-05-04 13:56:15] User:**
+lets check again, i just re started tony and connected the legs again.
+
+**[2026-05-04 13:59:19] Assistant:**
+Let's check if the boards are showing up now. Run this on Tony:
+
+```
+i2cdetect -y 1
+```
+
+If bus 1 still shows nothing, the most likely culprit is the PCA9685's separate 5V power rail. The green screw terminal on the servo board has two pins — **V+** and **GND**. This feeds power to the servos but also activates the board itself. Without it, the chip won't respond on I2C even if SDA/SCL are wired correctly.
+
+Check:
+1. Is there a wire going from your 5V supply (or Pi 5V pin) into the **V+** screw terminal on both boards?
+2. Is the GND from that supply also connected to the **GND** screw terminal?
+
+The Pi's 3.3V header power (pin 1 or 17) only powers the I2C logic side — the board's own VCC pin. The green screw terminal V+ is separate and the chip needs both to respond.
+
+Also, while you check that, let me fix the wrong comment in tony_creature.py — bus 1 is correct, not 13:
+
+---
+
+---
+
+**[2026-05-04 13:59:57] User:**
+can we check on the batteries, do you think it might be that as well  knowing our previous presentation, becasue tony was movies a minutes ago
+
+---
+
+**[2026-05-04 14:00:52] User:**
+lets check the batteries integrity
+
+**[2026-05-04 14:01:13] Assistant:**
+Let me look at what's available in the project first.
+
+There's a `led_battery.py` — let me read that along with the patch file.
+
+---
+
+---
+
+**[2026-05-04 14:04:21] User:**
+lets check again
+
+---
+
+**[2026-05-04 14:04:46] User:**
+lets try to check on the sevos again by making tony wiggle
+
+---
+
+**[2026-05-04 14:05:00] User:**
+ssh for me
+
+---
+
+**[2026-05-04 14:05:30] User:**
+i am already ssh to tony
+
+---
+
+**[2026-05-04 14:06:23] User:**
+it says process has a (code=exited, status=1/FAILURE)
+
+---
+
+**[2026-05-04 14:06:53] User:**
+it gave me this May 04 14:06:34 TonysBrain python3[1918]:     ~~~~~~~~^^^^^^^
+
+---
+
+**[2026-05-04 14:11:04] User:**
+lets check on the movement again
+
+---
+
+**[2026-05-04 14:11:29] User:**
+0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+
+---
+
+**[2026-05-04 14:13:27] User:**
+can you help me checking on that
+
+---
+
+**[2026-05-04 14:14:04] User:**
+the head move a little
+
+---
+
+**[2026-05-04 14:14:15] User:**
+let check on the legs
+
+---
+
+**[2026-05-04 14:14:39] User:**
+00:                         -- -- -- -- -- -- -- --
+
+---
+
+**[2026-05-04 14:14:54] User:**
+no yet
+
+---
+
+**[2026-05-04 14:15:38] User:**
+tony-creature.service - Tony Creature — Leg Animation and Head Tracking
+
+**[2026-05-04 14:15:51] Assistant:**
+The Pi still has the old `I2C_BUS = 13` in its copy — I fixed it locally but never SCP'd it over. Let me push it now:
+
+---
+
+---
+
+**[2026-05-04 14:16:20] User:**
+yes, they moved but imma change the direct power source
+
+---
+
+**[2026-05-04 14:20:03] User:**
+its moving now it was a direct power problem
+
+---
+
+**[2026-05-04 14:21:06] User:**
+let me check the speach chat log for tony
+
+**[2026-05-04 14:21:36] Assistant:**
+The conversation log is old (April 2). Let me check the more recent logs:
+
+---
+
+---
+
+**[2026-05-04 14:24:47] User:**
+when somemone say tony can we make the legs, lift up or like perk up and then go back to the base flat mode is just to make sure the student knows tony is listening
+
+**[2026-05-04 14:27:30] Assistant:**
+Love that idea — a quick "perk up" attention signal. Let me read tony_local.py first to see where to hook in the trigger.
+
+I can see exactly where to hook this in. The plan:
+
+1. Add `anim_perk` to `tony_creature.py` — all legs lift slightly, head tilts up, then returns flat
+2. In `tony_local.py`, trigger `perk` the moment "tony" is heard — before a question is even confirmed
+3. Fix the ServoKit crash in `tony_local.py` (it controls servos directly which conflicts with tony_creature.py)
+
+Let me do all three now:
+
+Now fix `tony_local.py` — remove the direct servo control (tony_creature.py handles it now) and add the perk trigger:
+
+Now add the perk trigger and wire creature commands into the question flow:
+
+Now remove the unused head config constants and the `head_neutral()` call in main since we no longer control servos directly:
+
+Now push both files to Tony:
+
+---
+
+---
+
+**[2026-05-04 14:29:49] User:**
+this show up ● tony-creature.service - Tony Creature — Leg Animation and Head Tracking
+
+---
+
+**[2026-05-04 14:32:07] User:**
+how can i check the mic entries like the last session in my terminal
+
+---
+
+**[2026-05-04 14:33:21] User:**
+is the mic working, it doesnt react when i say tony, also doe it undertand English?
+
+**[2026-05-04 14:34:28] Assistant:**
+Let me check the live log:
+
+The service just started — Whisper takes 30-60 seconds to load. Let me check if it's ready yet:
+
+---
+
+---
+
+**[2026-05-04 14:38:14] User:**
+how can we edit and fix this becasue is not working as intended is a bit buggy, can we make sure tony activelly listens through the mic and reacts to
+
+**[2026-05-04 14:41:14] Assistant:**
+Let me read the current state of tony_local.py to see exactly what we're working with:
+
+I can see the core issues:
+1. **3-second chunks** — Tony waits 3 full seconds before reacting to anything
+2. **Transcription blocks the mic** — while Whisper is thinking, audio is buffering and getting stale
+3. **No silence detection** — it tries to transcribe even dead silence
+4. **Only matches exact "question"** — misses "can you help", "what is", etc.
+
+Here's a proper rewrite with threaded audio capture, VAD silence skipping, faster 1.5s chunks, and flexible wake word + question matching:
+
+I already have `language="en"` set, but Whisper also needs `condition_on_previous_text=False` and a higher no-speech threshold to stop hallucinating Chinese characters. Let me fix that now and push everything:
+
+Now push and restart:
+
+---
+
+---
+
+**[2026-05-04 14:45:06] User:**
+ok tony reacted, but it seems that the reaction is a bit delayed more than 1.5 secs
+
+**[2026-05-04 14:46:37] Assistant:**
+The delay is Whisper `base` transcribing 1.5s of audio — it takes ~2s on the Pi, so total lag is ~3.5s. The fix is a two-stage approach: use the `tiny` model (4x faster) just for wake word detection, then switch to `base` only when actually recording a question.
+
+Now update the audio queue and main loop to use different chunk sizes per state:
+
+---
+
+---
+
+**[2026-05-04 14:50:48] User:**
+good the delay works, now i have a question if tony is constantly listening and logging what it hears, does that causes a dealys? can it be better if tony only listen once his trigger word is enable "tony" to record the question?
+
+**[2026-05-04 14:52:29] Assistant:**
+Exactly right — constantly running Whisper on every chunk is wasteful. The proper architecture is:
+
+- **Phase 1 (hotword)**: Only monitor audio energy (no Whisper). When someone speaks, grab that speech burst and run tiny Whisper once to check for "Tony"
+- **Phase 2 (question)**: Only AFTER "Tony" is confirmed, activate full Whisper to transcribe the question
+
+This means Whisper only fires when there's actual speech, and the base model only runs after the wake word is confirmed. Much lower CPU, faster reaction, no unnecessary logging.
+
+---
+
+---
+
+**[2026-05-04 14:57:01] User:**
+i am saying tony and tony is not reacting, why is that
+
+**[2026-05-04 14:57:15] Assistant:**
+Let me check the live mic output:
+
+---
+
+---
+
+**[2026-05-04 14:58:07] User:**
+[Tony] Loading Whisper models…
+
+**[2026-05-04 14:59:15] Assistant:**
+It's running but the VAD threshold might be too high for the mic. The mic audio never reaches RMS 200 so no bursts are ever sent to Whisper. Let me add debug output to see what RMS values the mic is actually producing:
+
+---
+
+---
+
+**[2026-05-04 15:02:16] User:**
+it show me this [Tony] Loading Whisper models…
+
+**[2026-05-04 15:03:06] Assistant:**
+The ambient noise floor is **1673 RMS** — the classroom background is already very loud. That's why Whisper is hallucinating garbage text on silence. We need to set thresholds well above that floor. Let me fix and remove the debug line:
+
+---
+
+---
+
+**[2026-05-04 15:03:58] User:**
+it show me this next [mic] excuse me.
+
+**[2026-05-04 15:04:42] Assistant:**
+It's detecting "tony." but not triggering — the period in `"tony."` doesn't match `"tony"` in the wake word set. That's the bug. Let me fix word matching to strip punctuation:
+
+Also the VAD is still too low — still picking up classroom chatter. Raise it:
+
+---
+
+---
+
+**[2026-05-04 15:07:00] User:**
+i previously close this window by accident where did we left off
+
+**[2026-05-04 15:07:16] Assistant:**
+Let me check the memory files to recap where things stood.
+
+---
+
+---
+
+**[2026-05-04 15:07:38] User:**
+2 classroom mic lsitener
+
+**[2026-05-04 15:08:44] Assistant:**
+Let me read the current state of the mic listener and related files.
+
+Good, I have the current code. The `tony_local.py` looks solid with the VAD two-phase system. The unconfirmed issue was whether the full trigger → Discord post → Groq answer pipeline actually fires end-to-end.
+
+Let me check the config and log quickly.
+
+OK, here's the current state: `tony_local.py` is complete with VAD + two-phase Whisper + Discord post. The last open question was whether the end-to-end trigger actually fires (Discord post was never confirmed).
+
+Before testing, there are uncommitted local changes to `tony_local.py` — let me check what changed since the Pi was last synced.
+
+---

@@ -12,13 +12,32 @@ States (written by Discord bot to /tmp/tony_cmd.json):
 Head tracking: reads /tmp/tony_state.json (person cx/cy from tony_brain.py).
 """
 import json, math, os, threading, time
+from adafruit_extended_bus import ExtendedI2C as _ExtI2C
 from adafruit_servokit import ServoKit
+
+I2C_BUS = 1  # Synopsys DesignWare GPIO I2C — buses 13/14 are internal RP1 false positives
 
 MAP_FILE    = os.path.join(os.path.dirname(__file__), "servo_map.json")
 POSES_FILE  = os.path.join(os.path.dirname(__file__), "poses.json")
 BRAIN_STATE = "/tmp/tony_state.json"
 CMD_FILE    = "/tmp/tony_cmd.json"
+PID_FILE    = "/tmp/tony_creature.pid"
 PULSE       = (500, 2500)
+
+def _enforce_single_instance():
+    """Kill any previous creature process before starting."""
+    import signal
+    if os.path.exists(PID_FILE):
+        try:
+            old = int(open(PID_FILE).read().strip())
+            os.kill(old, signal.SIGKILL)
+            time.sleep(0.5)
+        except (ProcessLookupError, ValueError, OSError):
+            pass
+    open(PID_FILE, "w").write(str(os.getpid()))
+
+import atexit
+atexit.register(lambda: os.remove(PID_FILE) if os.path.exists(PID_FILE) else None)
 
 TICK  = 0.02  # 50 Hz main loop
 SPEED = 4     # max degrees moved per tick toward target
@@ -42,7 +61,7 @@ _kits = {}
 def _get_kit(board_str):
     addr = int(board_str, 16)
     if addr not in _kits:
-        kit = ServoKit(channels=16, address=addr)
+        kit = ServoKit(channels=16, address=addr, i2c=_ExtI2C(I2C_BUS))
         for ch in range(16):
             kit.servo[ch].set_pulse_width_range(*PULSE)
         _kits[addr] = kit
@@ -65,6 +84,10 @@ HOME = {
     int(leg): {j: float(a) for j, a in joints.items()}
     for leg, joints in _poses["tony_flat"]["legs"].items()
 }
+
+# Femur direction that lifts each leg away from ground (verified physically per leg)
+# Odd legs: decrease femur = up.  Even legs: increase femur = up.
+LEG_LIFT = {1: -1, 2: +1, 3: -1, 4: +1, 5: -1, 6: +1}
 
 _cur      = {leg: {j: float(HOME[leg][j]) for j in HOME[leg]} for leg in HOME}
 _head_cur = {"pan": 90.0, "tilt": 90.0}
@@ -94,15 +117,36 @@ def _return_home(ticks=25):
     for _ in range(ticks):
         yield home_targets(), 90.0, 90.0
 
-def anim_breathe():
-    t0 = time.time()
+def anim_still():
+    """Default resting state — holds flat pose, completely motionless."""
     while True:
+        yield home_targets(), 90.0, 90.0
+
+def _wave_frames(duration=None):
+    """Shared wave logic used by both the idle pulse and looping variants."""
+    WAVE_ORDER = [1, 3, 5, 6, 4, 2]
+    PERIOD     = 4.2   # slower = less simultaneous load
+    STAGGER    = PERIOD / 6
+    RAISE      = 12    # reduced lift to ease power draw
+    CURL       = 8
+    TIBIA_LAG  = 0.10
+    t0 = time.time()
+    while duration is None or (time.time() - t0) < duration:
         t  = time.time() - t0
         tg = home_targets()
-        w  = math.sin(t * math.pi * 0.5) * 10  # 0.25 Hz, ±10°
-        for leg in range(1, 7):
-            tg[leg]["femur"] += w
+        for i, leg in enumerate(WAVE_ORDER):
+            pf = ((t - i * STAGGER) % PERIOD) / PERIOD
+            sf = math.sin(pf * math.pi * 2) if pf < 0.5 else 0.0
+            pt = ((t - i * STAGGER - TIBIA_LAG) % PERIOD) / PERIOD
+            st = math.sin(pt * math.pi * 2) if pt < 0.5 else 0.0
+            tg[leg]["femur"] += LEG_LIFT[leg] * RAISE * sf
+            tg[leg]["tibia"] += LEG_LIFT[leg] * CURL  * st
         yield tg, 90.0, 90.0
+
+def anim_breathe():
+    """10-second circular wave, triggered every 15 min as a reminder pulse."""
+    yield from _wave_frames(duration=10.0)
+    yield from _return_home()
 
 def anim_wave_loop():
     """Continuous ripple legs 1→6, used for loading state."""
@@ -117,7 +161,7 @@ def anim_wave_loop():
         for i, leg in enumerate([1, 2, 3, 4, 5, 6]):
             phase = ((t - i * STAGGER) % PERIOD) / PERIOD
             s = math.sin(phase * math.pi * 2) if phase < 0.5 else 0.0
-            tg[leg]["femur"] -= RAISE * s
+            tg[leg]["femur"] += LEG_LIFT[leg] * RAISE * s
             tg[leg]["coxa"]  += SWING * s * (1 if leg % 2 == 0 else -1)
         pan = 90.0 + 30.0 * math.sin(t * math.pi * 0.8)
         yield tg, pan, 90.0
@@ -134,7 +178,7 @@ def anim_excited_loop():
             off   = (leg - 1) * PERIOD / 6
             phase = ((t - off) % PERIOD) / PERIOD
             s = math.sin(phase * math.pi * 2) if phase < 0.5 else 0.0
-            tg[leg]["femur"] -= RAISE * s
+            tg[leg]["femur"] += LEG_LIFT[leg] * RAISE * s
         yield tg, 90.0, 85.0
 
 def anim_greeting():
@@ -144,7 +188,7 @@ def anim_greeting():
         ex = math.sin(t * math.pi) * 25
         for leg in range(1, 7):
             tg[leg]["coxa"]  += ex * (1 if leg % 2 == 0 else -1)
-            tg[leg]["femur"] -= ex * 0.4
+            tg[leg]["femur"] += LEG_LIFT[leg] * ex * 0.4
         yield tg, 90.0, 90.0
     for s in range(30):
         t  = s / 30
@@ -192,7 +236,7 @@ def anim_stretch():
         ex = math.sin(t * math.pi) * 30
         for leg in range(1, 7):
             tg[leg]["coxa"]  += ex * (1 if leg % 2 == 0 else -1)
-            tg[leg]["femur"] -= ex * 0.3
+            tg[leg]["femur"] += LEG_LIFT[leg] * ex * 0.3
         yield tg, 90.0, 90.0
     yield from _return_home()
 
@@ -203,8 +247,26 @@ def anim_excited_once():
         yield next(gen)
     yield from _return_home()
 
+def anim_perk():
+    """All legs lift slightly + head tilts up — Tony signals it heard its name."""
+    RAISE = 15
+    HOLD  = 20
+    for s in range(12):
+        t  = s / 12
+        tg = home_targets()
+        for leg in range(1, 7):
+            tg[leg]["femur"] += LEG_LIFT[leg] * RAISE * math.sin(t * math.pi / 2)
+        yield tg, 90.0, 75.0
+    for _ in range(HOLD):
+        tg = home_targets()
+        for leg in range(1, 7):
+            tg[leg]["femur"] += LEG_LIFT[leg] * RAISE
+        yield tg, 90.0, 75.0
+    yield from _return_home()
+
 ANIM_MAP = {
-    "idle":          anim_breathe,
+    "idle":          anim_still,        # motionless flat rest (default)
+    "pulse":         anim_breathe,      # 10-sec wave reminder (timer-triggered)
     "loading":       anim_wave_loop,
     "responding":    anim_excited_loop,
     "greeting":      anim_greeting,
@@ -213,7 +275,20 @@ ANIM_MAP = {
     "wiggle":        anim_wiggle,
     "stretch":       anim_stretch,
     "excited_once":  anim_excited_once,
+    "perk":          anim_perk,
 }
+
+# ── Idle reminder pulse ───────────────────────────────────────────────────────
+IDLE_PULSE_INTERVAL = 15 * 60  # 15 minutes
+
+def _idle_pulse_timer():
+    """Every 15 minutes, if Tony is resting, play the 10-second wave reminder."""
+    time.sleep(IDLE_PULSE_INTERVAL)  # wait before first pulse
+    while True:
+        if get_state() == "idle":
+            set_state("pulse")
+            print("[creature] idle reminder pulse", flush=True)
+        time.sleep(IDLE_PULSE_INTERVAL)
 
 # ── State machine ─────────────────────────────────────────────────────────────
 _state      = "idle"
@@ -249,7 +324,8 @@ def person_head_target():
 
 # ── Command listener thread ───────────────────────────────────────────────────
 def _cmd_listener():
-    last_ts = 0.0
+    # Ignore any cmd written before this process started
+    last_ts = time.time()
     while True:
         try:
             if os.path.exists(CMD_FILE):
@@ -267,6 +343,7 @@ def _cmd_listener():
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 def main():
+    _enforce_single_instance()
     print("[Tony Creature] Starting — loading tony_flat home pose", flush=True)
     for leg in range(1, 7):
         for j, a in HOME[leg].items():
@@ -275,10 +352,13 @@ def main():
     set_head("tilt", 90)
     time.sleep(0.5)
 
-    threading.Thread(target=_cmd_listener, daemon=True).start()
+    threading.Thread(target=_cmd_listener,    daemon=True).start()
+    threading.Thread(target=_idle_pulse_timer, daemon=True).start()
 
+    # Play the wave once on startup, then settle into still
+    set_state("pulse")
     cur_anim  = anim_breathe()
-    cur_state = "idle"
+    cur_state = "pulse"
 
     while True:
         t0    = time.time()
@@ -291,10 +371,16 @@ def main():
         try:
             tg, pan_h, tilt_h = next(cur_anim)
         except StopIteration:
+            print(f"[creature] {cur_state} done → idle (still)", flush=True)
             set_state("idle")
-            cur_anim  = anim_breathe()
+            cur_anim  = anim_still()
             cur_state = "idle"
             tg, pan_h, tilt_h = next(cur_anim)
+
+        # Skip servo writes when still — avoids constant PWM noise and power draw
+        if cur_state == "idle":
+            time.sleep(0.1)
+            continue
 
         person = person_head_target()
         if person:
