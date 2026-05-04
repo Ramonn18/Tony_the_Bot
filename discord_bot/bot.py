@@ -8,8 +8,10 @@ General     : Tony only replies when @mentioned
 """
 
 import asyncio
+import json as _json
 import os
 import tempfile
+import time as _time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -63,6 +65,45 @@ tony = TonyGroq(api_key=Config.GROQ_API_KEY, model=Config.GROQ_MODEL, system_pro
 
 _executor = ThreadPoolExecutor(max_workers=1)
 _MIN_PCM_BYTES = 48000 * 2 * 2 // 2
+
+# ── Creature movement ─────────────────────────────────────────────────────────
+_CREATURE_CMD = "/tmp/tony_cmd.json"
+
+# Student-accessible moves: display name → (internal cmd, duration seconds)
+_STUDENT_MOVES = {
+    "wave":    ("wave_once",    1.8),
+    "wiggle":  ("wiggle",       1.2),
+    "stretch": ("stretch",      2.2),
+    "flinch":  ("flinch",       1.2),
+    "excited": ("excited_once", 2.0),
+}
+
+_system_busy:    asyncio.Event | None = None  # set while Tony is processing a question
+_creature_queue: asyncio.Queue | None = None  # student fun-move queue (max 10)
+
+def creature_cmd(state: str):
+    """Write a state change to /tmp/tony_cmd.json for tony_creature.py to pick up."""
+    try:
+        with open(_CREATURE_CMD, "w") as f:
+            _json.dump({"cmd": state, "ts": _time.time()}, f)
+    except Exception:
+        pass
+
+def _set_system_busy(busy: bool):
+    if _system_busy is not None:
+        _system_busy.set() if busy else _system_busy.clear()
+
+async def _creature_worker():
+    """Process student move commands one at a time, waiting if Tony is busy."""
+    while True:
+        cmd, duration = await _creature_queue.get()
+        while _system_busy.is_set():
+            await asyncio.sleep(0.5)
+        creature_cmd(cmd)
+        await asyncio.sleep(duration)
+        if not _system_busy.is_set():
+            creature_cmd("idle")
+        _creature_queue.task_done()
 
 # Per-voice-channel state: channel_id → {vc, sink}
 active_vcs: dict[int, dict] = {}
@@ -193,6 +234,8 @@ async def _process_transcript(uid: int, sess: dict, text: str):
 
             if question_text and user:
                 qid = qa.add_question(sess["display_name"], uid, question_text)
+                _set_system_busy(True)
+                creature_cmd("loading")
                 answer, from_cache = await _tony_reply(question_text)
                 qa.answer_question(qid, answer, "Tony (AI)")
                 cache_note = " *(answered before)*" if from_cache else ""
@@ -203,8 +246,12 @@ async def _process_transcript(uid: int, sess: dict, text: str):
                     )
                 except discord.Forbidden:
                     pass
+                creature_cmd("responding")
                 if sess.get("channel_id"):
                     await speak_in_vc(sess["channel_id"], answer)
+                await asyncio.sleep(4)
+                creature_cmd("idle")
+                _set_system_busy(False)
         else:
             sess["transcript"] += " " + clean.strip(" .,!?")
 
@@ -276,6 +323,8 @@ async def on_voice_state_update(member: discord.Member, before, after):
             await join_voice(after.channel)
         except Exception as exc:
             print(f"[Tony] Failed to join voice: {exc}")
+        if _system_busy is not None and not _system_busy.is_set():
+            creature_cmd("greeting")
 
     if before.channel and before.channel.id in Config.VOICE_CHANNEL_IDS:
         print(f"[Debug] {member.display_name} left {before.channel.name}, _joining={_joining}")
@@ -304,9 +353,15 @@ async def on_message(message: discord.Message):
     if isinstance(message.channel, discord.DMChannel):
         question = message.content.strip()
         if question and not question.startswith("!"):
+            _set_system_busy(True)
+            creature_cmd("loading")
             async with message.channel.typing():
                 answer, _ = await _tony_reply(question)
             await message.reply(f"💡 **Tony**:\n{answer}")
+            creature_cmd("responding")
+            await asyncio.sleep(4)
+            creature_cmd("idle")
+            _set_system_busy(False)
         await bot.process_commands(message)
         return
 
@@ -328,9 +383,15 @@ async def on_message(message: discord.Message):
         if not question or question.startswith("!"):
             await bot.process_commands(message)
             return
+        _set_system_busy(True)
+        creature_cmd("loading")
         async with message.channel.typing():
             answer, _ = await _tony_reply(question)
         await message.reply(f"💡 **Tony**:\n{answer}")
+        creature_cmd("responding")
+        await asyncio.sleep(4)
+        creature_cmd("idle")
+        _set_system_busy(False)
         await bot.process_commands(message)
         return
 
@@ -345,7 +406,10 @@ async def on_message(message: discord.Message):
         loop = asyncio.get_event_loop()
         similar = await loop.run_in_executor(None, qa.find_similar, question)
         if similar:
+            creature_cmd("responding")
             await message.reply(f"💡 **Tony** *(answered before)*:\n{similar.answer_text}")
+            await asyncio.sleep(4)
+            creature_cmd("idle")
             await bot.process_commands(message)
             return
 
@@ -383,6 +447,12 @@ async def on_member_join(member: discord.Member):
 
 @bot.event
 async def on_ready():
+    global _system_busy, _creature_queue
+    if _system_busy is None:
+        _system_busy = asyncio.Event()
+        _creature_queue = asyncio.Queue(maxsize=10)
+        asyncio.create_task(_creature_worker())
+        print("[Tony] Creature movement system ready")
     print(f"[Tony] Online as {bot.user} (ID: {bot.user.id})")
     print(f"[Tony] Q&A channel : {Config.QUESTIONS_CHANNEL_ID}")
     print(f"[Tony] General     : {Config.GENERAL_CHANNEL_ID}")
@@ -463,12 +533,44 @@ async def cmd_thelp(ctx: commands.Context):
         '2. Say **"I have a question"** → Tony starts listening\n'
         "3. Ask your question\n"
         '4. Say **"Thank you"** → answer is posted in **#tonys-chat-room**\n\n'
-        "**Commands:**\n"
-        "`!join` / `!leave` — manual voice control *(admin)*\n"
+        "**Fun commands:**\n"
+        "`!pose <move>` — make Tony move! (`wave` | `wiggle` | `stretch` | `flinch` | `excited`)\n"
+        "`!queue` — see how many moves are queued\n\n"
+        "**Admin commands:**\n"
+        "`!join` / `!leave` — manual voice control\n"
         "`!questions` — list unanswered questions\n"
         "`!answer <id> <text>` — override Tony's answer\n"
         "`!history` — last 10 Q&A entries\n"
     )
+
+
+@bot.command(name="pose")
+async def cmd_pose(ctx: commands.Context, move: str = None):
+    if _creature_queue is None:
+        return await ctx.send("❌ Tony's movement system isn't ready yet.")
+    if move not in _STUDENT_MOVES:
+        names = " | ".join(_STUDENT_MOVES)
+        return await ctx.send(f"🦾 Valid moves: `{names}`")
+    if _creature_queue.full():
+        return await ctx.send("⏳ Tony's move queue is full, try again soon!")
+    internal_cmd, duration = _STUDENT_MOVES[move]
+    pos = _creature_queue.qsize() + 1
+    await _creature_queue.put((internal_cmd, duration))
+    if pos == 1:
+        await ctx.send(f"🦾 Tony will `{move}`!")
+    else:
+        await ctx.send(f"⏳ `{move}` queued (#{pos} in line)")
+
+
+@bot.command(name="queue")
+async def cmd_queue(ctx: commands.Context):
+    if _creature_queue is None:
+        return await ctx.send("❌ Tony's movement system isn't ready yet.")
+    size = _creature_queue.qsize()
+    if size == 0:
+        await ctx.send("✅ No moves queued — Tony is free!")
+    else:
+        await ctx.send(f"⏳ **{size}** move(s) queued.")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
