@@ -316,24 +316,35 @@ async def on_voice_state_update(member: discord.Member, before, after):
     if member.bot:
         return
 
-    if after.channel and after.channel.id in Config.VOICE_CHANNEL_IDS:
+    before_id = before.channel.id if before.channel else None
+    after_id  = after.channel.id  if after.channel  else None
+
+    # Student moved INTO a monitored channel from somewhere else
+    if after_id in Config.VOICE_CHANNEL_IDS and after_id != before_id:
+        print(f"[Tony] {member.display_name} joined voice channel {after_id}")
         sessions[member.id]["display_name"] = member.display_name
-        sessions[member.id]["channel_id"] = after.channel.id
+        sessions[member.id]["channel_id"] = after_id
         try:
             await join_voice(after.channel)
         except Exception as exc:
             print(f"[Tony] Failed to join voice: {exc}")
         if _system_busy is not None and not _system_busy.is_set():
             creature_cmd("greeting")
+        try:
+            await member.send(
+                f"👋 Hey **{member.display_name}**! I'm in the voice channel with you.\n\n"
+                f"**Type your question here** and I'll answer right away!"
+            )
+            print(f"[Tony] DM sent to {member.display_name}")
+        except discord.Forbidden:
+            print(f"[Tony] DM FAILED for {member.display_name} — DMs are disabled")
 
-    if before.channel and before.channel.id in Config.VOICE_CHANNEL_IDS:
-        print(f"[Debug] {member.display_name} left {before.channel.name}, _joining={_joining}")
-        await asyncio.sleep(2)
+    # Student moved OUT of a monitored channel (not just mute/unmute/video)
+    if before_id in Config.VOICE_CHANNEL_IDS and before_id != after_id:
+        await asyncio.sleep(3)
         if _joining:
-            print(f"[Debug] Skipping leave — still joining")
             return
         non_bots = [m for m in before.channel.members if not m.bot]
-        print(f"[Debug] Non-bots in channel: {[m.display_name for m in non_bots]}")
         if not non_bots:
             await leave_voice(before.channel.id)
 
@@ -349,7 +360,7 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    # DM: answer directly with Groq
+    # ── DM: 1-on-1 session ────────────────────────────────────────────────────
     if isinstance(message.channel, discord.DMChannel):
         question = message.content.strip()
         if question and not question.startswith("!"):
@@ -358,6 +369,28 @@ async def on_message(message: discord.Message):
             async with message.channel.typing():
                 answer, _ = await _tony_reply(question)
             await message.reply(f"💡 **Tony**:\n{answer}")
+
+            # Post to #tonys-chat-room so professor can review and correct
+            uid = message.author.id
+            in_session = uid in sessions and sessions[uid].get("channel_id") is not None
+            if in_session:
+                qid = qa.add_question(message.author.display_name, uid, question)
+                prof_mentions = " ".join(f"<@{p}>" for p in Config.PROFESSOR_IDS)
+                ch = bot.get_channel(Config.QUESTIONS_CHANNEL_ID)
+                if ch:
+                    tony_msg = await ch.send(
+                        f"🎙️ **{message.author.display_name}** asked in 1-on-1:\n"
+                        f"> {question}\n\n"
+                        f"💡 **Tony answered:** {answer}\n\n"
+                        f"{prof_mentions} — reply to this message to correct or add anything."
+                    )
+                    pending_questions[tony_msg.id] = {
+                        "student_user": message.author,
+                        "question_text": question,
+                        "qid": qid,
+                        "from_dm": True,
+                    }
+
             creature_cmd("responding")
             await asyncio.sleep(4)
             creature_cmd("idle")
@@ -365,19 +398,33 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    # Professor replied to one of Tony's pending question messages
+    # ── Professor replied to a pending question ───────────────────────────────
     if (message.author.id in Config.PROFESSOR_IDS
             and message.reference
             and message.reference.message_id in pending_questions):
         pending = pending_questions.pop(message.reference.message_id)
-        answer = message.content.strip()
-        qa.answer_question(pending["qid"], answer, message.author.display_name)
-        student_msg = pending["student_message"]
-        await student_msg.reply(f"💡 **Professor {message.author.display_name}** answered:\n{answer}")
+        correction = message.content.strip()
+        qa.answer_question(pending["qid"], correction, message.author.display_name)
+        prof_name = message.author.display_name
+
+        if pending.get("from_dm"):
+            # Question came from DM — send correction back to student via DM
+            try:
+                await pending["student_user"].send(
+                    f"💡 **Professor {prof_name}** added:\n{correction}"
+                )
+            except discord.Forbidden:
+                pass
+            await message.add_reaction("✅")
+        else:
+            # Question came from the channel — reply there so everyone sees
+            await pending["student_message"].reply(
+                f"💡 **Professor {prof_name}** answered:\n{correction}"
+            )
         await bot.process_commands(message)
         return
 
-    # General channel: Tony answers everything directly with Groq
+    # ── #general: Tony answers with Groq ─────────────────────────────────────
     if message.channel.id == Config.GENERAL_CHANNEL_ID:
         question = message.content.strip()
         if not question or question.startswith("!"):
@@ -395,12 +442,15 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    # tonys-chat-room: professor Q&A flow
+    # ── #tonys-chat-room: Tony answers immediately, professor reviews ─────────
     if message.channel.id == Config.QUESTIONS_CHANNEL_ID:
         question = message.content.strip()
         if not question or question.startswith("!"):
             await bot.process_commands(message)
             return
+
+        _set_system_busy(True)
+        creature_cmd("loading")
 
         # Check cache first
         loop = asyncio.get_event_loop()
@@ -410,22 +460,37 @@ async def on_message(message: discord.Message):
             await message.reply(f"💡 **Tony** *(answered before)*:\n{similar.answer_text}")
             await asyncio.sleep(4)
             creature_cmd("idle")
+            _set_system_busy(False)
             await bot.process_commands(message)
             return
 
-        # No cache — ping the professor
+        # New question — Tony answers with Groq immediately
+        async with message.channel.typing():
+            answer, _ = await _tony_reply(question)
+
         qid = qa.add_question(message.author.display_name, message.author.id, question)
-        await message.reply("⏳ Great question! Let me check with the professor — please wait a moment.")
+        qa.answer_question(qid, answer, "Tony (AI)")
+
+        await message.reply(f"💡 **Tony**:\n{answer}")
+
+        # Ping professor to review Tony's answer
         prof_mention = " ".join(f"<@{pid}>" for pid in Config.PROFESSOR_IDS)
         tony_msg = await message.channel.send(
-            f"{prof_mention} **{message.author.display_name}** asks:\n> {question}\n"
-            f"Please reply to this message with your answer."
+            f"{prof_mention} — **{message.author.display_name}** asked above. "
+            f"Reply here to correct or add anything."
         )
         pending_questions[tony_msg.id] = {
             "student_message": message,
+            "student_user": message.author,
             "question_text": question,
             "qid": qid,
+            "from_dm": False,
         }
+
+        creature_cmd("responding")
+        await asyncio.sleep(4)
+        creature_cmd("idle")
+        _set_system_busy(False)
 
     await bot.process_commands(message)
 
